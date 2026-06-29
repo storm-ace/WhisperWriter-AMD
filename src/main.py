@@ -29,12 +29,21 @@ class WhisperWriterApp(QObject):
         self.app.setWindowIcon(QIcon(os.path.join('assets', 'ww-logo.png')))
 
         # Enforce a single running instance (avoids double hotkeys and server conflicts).
-        # On Windows the segment is released automatically when the process exits.
+        # Retry briefly: the in-app restart (after saving settings) launches the new
+        # instance while the old one is still releasing the lock — without the retry
+        # the new instance would be refused and the app would appear to "quit on save".
         self._single_instance = QSharedMemory('WhisperWriter-AMD-single-instance')
-        if not self._single_instance.create(1):
-            QMessageBox.information(
-                None, 'WhisperWriter',
-                'WhisperWriter is already running — check the system tray.')
+        acquired = self._single_instance.create(1)
+        if not acquired:
+            for _ in range(12):  # up to ~3.6s
+                time.sleep(0.3)
+                if self._single_instance.create(1):
+                    acquired = True
+                    break
+        if not acquired:
+            # Already running. Exit cleanly without a modal dialog (which would hang
+            # invisibly when launched hidden via pythonw).
+            print('WhisperWriter is already running; exiting this duplicate instance.')
             sys.exit(0)
 
         ConfigManager.initialize()
@@ -175,11 +184,11 @@ class WhisperWriterApp(QObject):
     def restart_app(self):
         """Restart the application to apply the new settings."""
         self.cleanup()
-        # Release the single-instance lock so the relaunched process can acquire it.
-        if getattr(self, '_single_instance', None) is not None:
-            self._single_instance.detach()
-        QApplication.quit()
+        # Launch the replacement, then quit. The single-instance lock is freed only when
+        # this process exits (QSharedMemory.detach does not release it on Windows), so the
+        # new instance retries acquiring the lock until then (see __init__).
         QProcess.startDetached(sys.executable, sys.argv)
+        QApplication.quit()
 
     def on_settings_closed(self):
         """
