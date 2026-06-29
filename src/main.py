@@ -49,8 +49,8 @@ class WhisperWriterApp(QObject):
         self.key_listener.add_callback("on_activate", self.on_activation)
         self.key_listener.add_callback("on_deactivate", self.on_deactivation)
 
-        # Kies de transcriptie-engine. Bij 'whispercpp' start een lokale GPU-server
-        # (Vulkan) en is er geen in-proces faster-whisper-model nodig.
+        # Pick the transcription engine. For 'whispercpp' a local GPU server (Vulkan)
+        # is launched and no in-process faster-whisper model is needed.
         self.engine = resolve_engine()
         self.whispercpp_server = None
         if self.engine == 'whispercpp':
@@ -59,10 +59,8 @@ class WhisperWriterApp(QObject):
             if wc_options.get('auto_start', True):
                 self.whispercpp_server = WhisperCppServer()
                 self.whispercpp_server.start()
-        elif self.engine == 'faster-whisper':
+        else:  # faster-whisper
             self.local_model = create_local_model()
-        else:  # openai-api
-            self.local_model = None
 
         self.result_thread = None
 
@@ -78,20 +76,19 @@ class WhisperWriterApp(QObject):
         self.main_window.show()
 
     def _engine_label(self):
-        """Leesbare naam van de actieve transcriptie-engine."""
+        """Human-readable name of the active transcription engine."""
         return {
             'whispercpp': 'whisper.cpp GPU (Vulkan)',
-            'faster-whisper': 'faster-whisper (CPU/CUDA)',
-            'openai-api': 'OpenAI API',
+            'faster-whisper': 'faster-whisper (CPU)',
         }.get(self.engine, self.engine)
 
     def _status_text(self):
-        """Statusregel voor tray-tooltip en -menu (ververst bij openen)."""
-        parts = [f'WhisperWriter actief — {self._engine_label()}']
+        """Status line for the tray tooltip and menu (refreshed when opened)."""
+        parts = [f'WhisperWriter running - {self._engine_label()}']
         if self.engine == 'whispercpp':
             available = self.whispercpp_server.is_available() if self.whispercpp_server \
                 else WhisperCppServer().is_available()
-            parts.append('GPU-server: ' + ('draait ✓' if available else 'niet bereikbaar ✗'))
+            parts.append('GPU server: ' + ('running' if available else 'unreachable'))
         return '  |  '.join(parts)
 
     def _update_tray_status(self):
@@ -107,7 +104,7 @@ class WhisperWriterApp(QObject):
 
         tray_menu = QMenu()
 
-        # Status-regel bovenaan (niet klikbaar) zodat je ziet dat het draait.
+        # Non-clickable status line at the top so you can see it is running.
         self.status_action = QAction('', self.app)
         self.status_action.setEnabled(False)
         tray_menu.addAction(self.status_action)
@@ -122,11 +119,11 @@ class WhisperWriterApp(QObject):
         tray_menu.addAction(settings_action)
 
         tray_menu.addSeparator()
-        exit_action = QAction('Afsluiten (stopt ook de GPU-server)', self.app)
+        exit_action = QAction('Exit (also stops the GPU server)', self.app)
         exit_action.triggered.connect(self.exit_app)
         tray_menu.addAction(exit_action)
 
-        # Status verversen telkens als het menu opent.
+        # Refresh the status each time the menu opens.
         tray_menu.aboutToShow.connect(self._update_tray_status)
         self._update_tray_status()
 

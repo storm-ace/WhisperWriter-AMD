@@ -1,27 +1,19 @@
 import io
-import os
 import numpy as np
 import requests
 import soundfile as sf
 from faster_whisper import WhisperModel
-from openai import OpenAI
 
 from utils import ConfigManager
 
 
 def resolve_engine():
-    """
-    Bepaal welke transcriptie-engine actief is.
+    """Return the active transcription engine.
 
-    Nieuwe expliciete sleutel `model_options.engine` heeft voorrang; valt terug op de
-    oude `use_api`-schakelaar voor achterwaartse compatibiliteit.
-    Mogelijke waarden: 'faster-whisper' (CPU/CUDA, in-proces), 'whispercpp' (GPU via
-    lokale whisper.cpp-server over HTTP), 'openai-api'.
+    'whispercpp' = GPU via a local whisper.cpp server over HTTP (Vulkan).
+    'faster-whisper' = in-process, CPU.
     """
-    engine = ConfigManager.get_config_value('model_options', 'engine')
-    if engine:
-        return engine
-    return 'openai-api' if ConfigManager.get_config_value('model_options', 'use_api') else 'faster-whisper'
+    return ConfigManager.get_config_value('model_options', 'engine') or 'faster-whisper'
 
 def create_local_model():
     """
@@ -79,38 +71,12 @@ def transcribe_local(audio_data, local_model=None):
                                       vad_filter=model_options['local']['vad_filter'],)
     return ''.join([segment.text for segment in list(response[0])])
 
-def transcribe_api(audio_data):
-    """
-    Transcribe an audio file using the OpenAI API.
-    """
-    model_options = ConfigManager.get_config_section('model_options')
-    client = OpenAI(
-        api_key=os.getenv('OPENAI_API_KEY') or None,
-        base_url=model_options['api']['base_url'] or 'https://api.openai.com/v1'
-    )
-
-    # Convert numpy array to WAV file
-    byte_io = io.BytesIO()
-    sample_rate = ConfigManager.get_config_section('recording_options').get('sample_rate') or 16000
-    sf.write(byte_io, audio_data, sample_rate, format='wav')
-    byte_io.seek(0)
-
-    response = client.audio.transcriptions.create(
-        model=model_options['api']['model'],
-        file=('audio.wav', byte_io, 'audio/wav'),
-        language=model_options['common']['language'],
-        prompt=model_options['common']['initial_prompt'],
-        temperature=model_options['common']['temperature'],
-    )
-    return response.text
-
 def transcribe_whispercpp(audio_data):
     """
-    Transcribe via een lokale whisper.cpp `whisper-server` (GPU/Vulkan) over HTTP.
+    Transcribe via a local whisper.cpp `whisper-server` (GPU/Vulkan) over HTTP.
 
-    Hergebruikt hetzelfde WAV-over-HTTP-patroon als de OpenAI-API-route. De int16-audio
-    wordt direct als WAV verstuurd; de /32768.0-conversie van de in-proces-route is hier
-    niet nodig (whisper.cpp leest de WAV zelf in).
+    The int16 audio is sent straight as a WAV; the /32768.0 conversion used by the
+    in-process engine is not needed here (whisper.cpp decodes the WAV itself).
     """
     model_options = ConfigManager.get_config_section('model_options')
     wc_options = model_options.get('whispercpp', {})
@@ -161,15 +127,13 @@ def post_process_transcription(transcription):
 
 def transcribe(audio_data, local_model=None):
     """
-    Transcribe audio date using the OpenAI API or a local model, depending on config.
+    Transcribe audio using the configured engine (whisper.cpp GPU server or
+    in-process faster-whisper).
     """
     if audio_data is None:
         return ''
 
-    engine = resolve_engine()
-    if engine == 'openai-api':
-        transcription = transcribe_api(audio_data)
-    elif engine == 'whispercpp':
+    if resolve_engine() == 'whispercpp':
         transcription = transcribe_whispercpp(audio_data)
     else:  # 'faster-whisper'
         transcription = transcribe_local(audio_data, local_model)

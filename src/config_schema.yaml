@@ -1,18 +1,12 @@
 # Configuration options for the Whisper models
 model_options:
-  use_api:
-    value: false
-    type: bool
-    description: "Legacy toggle (OpenAI API vs local faster-whisper). Only used when 'engine' is empty. Prefer 'engine'."
-
   engine:
     value: faster-whisper
     type: str
-    description: "Transcription engine / compute target. 'faster-whisper' = in-process CPU (default, works out of the box; ctranslate2 has no AMD GPU path so it is CPU-only here). 'whispercpp' = GPU via Vulkan — the AMD GPU/iGPU option (requires a whisper.cpp Vulkan build + ggml model; see README). 'openai-api' = remote OpenAI API."
+    description: "Transcription engine / compute target. 'faster-whisper' = in-process CPU (default, works out of the box; ctranslate2 has no AMD GPU path so it is CPU-only here). 'whispercpp' = GPU via Vulkan — the AMD GPU/iGPU option (requires a whisper.cpp Vulkan build + ggml model; see README)."
     options:
       - faster-whisper
       - whispercpp
-      - openai-api
 
   # Common configuration options for both API and local models
   common:
@@ -27,22 +21,7 @@ model_options:
     initial_prompt:
       value: null
       type: str
-      description: "A string used as an initial prompt to condition the transcription. More info: https://platform.openai.com/docs/guides/speech-to-text/prompting"
-
-  # Configuration options for the OpenAI API
-  api:
-    model:
-      value: whisper-1
-      type: str
-      description: "The model to use for transcription. Currently only 'whisper-1' is available."
-    base_url:
-      value: https://api.openai.com/v1
-      type: str
-      description: "The base URL for the API. Can be changed to use a local API endpoint."
-    api_key:
-      value: null
-      type: str
-      description: "Your API key for the OpenAI API. Required for non-local API usage."
+      description: "A string used as an initial prompt to bias the transcription (e.g. domain-specific terms or names)."
 
   # Configuration options for the faster-whisper model
   local:

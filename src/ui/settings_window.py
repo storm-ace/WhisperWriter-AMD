@@ -1,6 +1,5 @@
 import os
 import sys
-from dotenv import set_key, load_dotenv
 from PyQt5.QtWidgets import (
     QApplication, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox, QCheckBox,
     QMessageBox, QTabWidget, QWidget, QSizePolicy, QSpacerItem, QToolButton, QStyle, QFileDialog
@@ -10,8 +9,6 @@ from PyQt5.QtCore import Qt, QCoreApplication, QProcess, pyqtSignal
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from ui.base_window import BaseWindow
 from utils import ConfigManager
-
-load_dotenv()
 
 class SettingsWindow(BaseWindow):
     settings_closed = pyqtSignal()
@@ -32,8 +29,8 @@ class SettingsWindow(BaseWindow):
         self.create_buttons()
 
         # The Engine setting drives which model settings are relevant
-        # (faster-whisper -> local, whispercpp -> whispercpp, openai-api -> api).
-        # Only the matching section is shown; the legacy use_api checkbox is hidden.
+        # (faster-whisper -> local section, whispercpp -> whispercpp section).
+        # Only the matching section is shown.
         self.engine_combo = self.findChild(QComboBox, 'model_options_engine_input')
         if self.engine_combo:
             self.engine_combo.currentTextChanged.connect(self.toggle_engine_options)
@@ -123,8 +120,6 @@ class SettingsWindow(BaseWindow):
     def create_checkbox(self, value, key):
         widget = QCheckBox()
         widget.setChecked(value)
-        if key == 'use_api':
-            widget.setObjectName('model_options_use_api_input')
         return widget
 
     def create_combobox(self, value, options):
@@ -135,10 +130,7 @@ class SettingsWindow(BaseWindow):
 
     def create_line_edit(self, value, key=None):
         widget = QLineEdit(value)
-        if key == 'api_key':
-            widget.setEchoMode(QLineEdit.Password)
-            widget.setText(os.getenv('OPENAI_API_KEY') or value)
-        elif key == 'model_path':
+        if key == 'model_path':
             layout = QHBoxLayout()
             layout.addWidget(widget)
             browse_button = QPushButton('Browse')
@@ -175,17 +167,8 @@ class SettingsWindow(BaseWindow):
         QMessageBox.information(self, 'Description', description)
 
     def save_settings(self):
-        """Save the settings to the config file and .env file."""
+        """Save the settings to the config file."""
         self.iterate_settings(self.save_setting)
-
-        # Save the API key to the .env file
-        api_key = ConfigManager.get_config_value('model_options', 'api', 'api_key') or ''
-        set_key('.env', 'OPENAI_API_KEY', api_key)
-        os.environ['OPENAI_API_KEY'] = api_key
-
-        # Remove the API key from the config
-        ConfigManager.set_config_value(None, 'model_options', 'api', 'api_key')
-
         ConfigManager.save_config()
         QMessageBox.information(self, 'Settings Saved', 'Settings have been saved. The application will now restart.')
         self.settings_saved.emit()
@@ -253,16 +236,13 @@ class SettingsWindow(BaseWindow):
 
     def toggle_engine_options(self, engine):
         """Show only the model settings relevant to the selected engine."""
-        section_for = {'faster-whisper': 'local', 'whispercpp': 'whispercpp', 'openai-api': 'api'}
+        section_for = {'faster-whisper': 'local', 'whispercpp': 'whispercpp'}
         visible_section = section_for.get(engine)
 
         def apply(widget, category, sub_category, key, meta):
             if category != 'model_options':
                 return
-            # The legacy use_api checkbox is superseded by the Engine setting.
-            if sub_category is None and key == 'use_api':
-                self._set_row_visible(widget, category, sub_category, key, False)
-            elif sub_category in ('local', 'whispercpp', 'api'):
+            if sub_category in ('local', 'whispercpp'):
                 self._set_row_visible(widget, category, sub_category, key, sub_category == visible_section)
 
         self.iterate_settings(apply)

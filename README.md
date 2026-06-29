@@ -74,9 +74,9 @@ Once started, the script runs in the background and waits for a keyboard shortcu
 - `press_to_toggle` Recording will stop when the keyboard shortcut is pressed again. Recording will not start until the keyboard shortcut is pressed again.
 - `hold_to_record` Recording will continue until the keyboard shortcut is released. Recording will not start until the keyboard shortcut is held down again.
 
-You can change the keyboard shortcut (`activation_key`) and recording mode in the [Configuration Options](#configuration-options). While recording and transcribing, a small status window is displayed that shows the current stage of the process (but this can be turned off). Once the transcription is complete, the transcribed text will be automatically written to the active window.
+You can change the activation shortcut (`activation_key`) — a keyboard combo or a mouse button — and the recording mode in the [Configuration Options](#configuration-options). While recording and transcribing, a small status window is displayed that shows the current stage of the process (but this can be turned off). Once the transcription is complete, the transcribed text will be automatically written to the active window.
 
-The transcription can either be done locally through the [faster-whisper Python package](https://github.com/SYSTRAN/faster-whisper/) or through a request to [OpenAI's API](https://platform.openai.com/docs/guides/speech-to-text). By default, the app will use a local model, but you can change this in the [Configuration Options](#configuration-options). If you choose to use the API, you will need to either provide your OpenAI API key or change the base URL endpoint.
+Transcription runs locally. This fork adds a GPU engine for AMD via [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (Vulkan); the original CPU engine ([faster-whisper](https://github.com/SYSTRAN/faster-whisper/)) is also available. Choose the engine in the [Configuration Options](#configuration-options). (The OpenAI-API transcription option from upstream has been removed in this fork.)
 
 **Fun fact:** Almost the entirety of the initial release of the project was pair-programmed with [ChatGPT-4](https://openai.com/product/gpt-4) and [GitHub Copilot](https://github.com/features/copilot) using VS Code. Practically every line, including most of this README, was written by AI. After the initial prototype was finished, WhisperWriter was used to write a lot of the prompts as well!
 
@@ -170,27 +170,31 @@ WhisperWriter uses a configuration file to customize its behaviour. To set up th
 </p>
 
 #### Model Options
-- `use_api`: Toggle to choose whether to use the OpenAI API or a local Whisper model for transcription. (Default: `false`)
-- `common`: Options common to both API and local models.
+- `engine`: Transcription engine. `whispercpp` = GPU via Vulkan (AMD GPUs/iGPUs; requires a whisper.cpp Vulkan build + ggml model — see the AMD GPU fork section above). `faster-whisper` = in-process CPU. (Default: `faster-whisper`)
+- `common`: Options shared by both engines.
   - `language`: The language code for the transcription in [ISO-639-1 format](https://en.wikipedia.org/wiki/List_of_ISO_639_language_codes). (Default: `null`)
   - `temperature`: Controls the randomness of the transcription output. Lower values make the output more focused and deterministic. (Default: `0.0`)
-  - `initial_prompt`: A string used as an initial prompt to condition the transcription. More info: [OpenAI Prompting Guide](https://platform.openai.com/docs/guides/speech-to-text/prompting). (Default: `null`)
+  - `initial_prompt`: A string used as an initial prompt to bias the transcription (e.g. domain terms). (Default: `null`)
 
-- `api`: Configuration options for the OpenAI API. See the [OpenAI API documentation](https://platform.openai.com/docs/api-reference/audio/create?lang=python) for more information.
-  - `model`: The model to use for transcription. Currently, only `whisper-1` is available. (Default: `whisper-1`)
-  - `base_url`: The base URL for the API. Can be changed to use a local API endpoint, such as [LocalAI](https://localai.io/). (Default: `https://api.openai.com/v1`)
-  - `api_key`: Your API key for the OpenAI API. Required for non-local API usage. (Default: `null`)
+- `whispercpp`: Options for the whisper.cpp GPU (Vulkan) engine.
+  - `binary_path`: Full path to `whisper-server.exe` (whisper.cpp built with Vulkan).
+  - `model_path`: Full path to the ggml model file (e.g. `ggml-large-v3.bin`; ggml format, not the faster-whisper format).
+  - `lib_path`: Directory with extra runtime DLLs the server needs (e.g. the MinGW `bin` dir); leave empty for MSVC builds.
+  - `host` / `port`: Where the local server listens. (Defaults: `127.0.0.1` / `8080`)
+  - `n_threads`: CPU threads for the server. (Default: empty)
+  - `auto_start`: Let WhisperWriter launch/stop the server automatically. (Default: `true`)
 
-- `local`: Configuration options for the local Whisper model.
-  - `model`: The model to use for transcription. The larger models provide better accuracy but are slower. See [available models and languages](https://github.com/openai/whisper?tab=readme-ov-file#available-models-and-languages). (Default: `base`)
-  - `device`: The device to run the local Whisper model on. Use `cuda` for NVIDIA GPUs, `cpu` for CPU-only processing, or `auto` to let the system automatically choose the best available device. (Default: `auto`)
-  - `compute_type`: The compute type to use for the local Whisper model. [More information on quantization here](https://opennmt.net/CTranslate2/quantization.html). (Default: `default`)
-  - `condition_on_previous_text`: Set to `true` to use the previously transcribed text as a prompt for the next transcription request. (Default: `true`)
-  - `vad_filter`: Set to `true` to use [a voice activity detection (VAD) filter](https://github.com/snakers4/silero-vad) to remove silence from the recording. (Default: `false`)
-  - `model_path`: The path to the local Whisper model. If not specified, the default model will be downloaded. (Default: `null`)
+- `local`: Options for the faster-whisper (CPU) engine.
+  - `model`: The model to use. Larger models are more accurate but slower. See [available models](https://github.com/openai/whisper?tab=readme-ov-file#available-models-and-languages). (Default: `base`)
+  - `device`: `cpu` only on this AMD build (ctranslate2 has no AMD GPU path; for GPU use the `whispercpp` engine). (Default: `cpu`)
+  - `compute_type`: The compute type. [More on quantization](https://opennmt.net/CTranslate2/quantization.html). (Default: `default`)
+  - `condition_on_previous_text`: Use the previously transcribed text as a prompt for the next request. (Default: `true`)
+  - `vad_filter`: Use [a voice activity detection (VAD) filter](https://github.com/snakers4/silero-vad) to remove silence. (Default: `false`)
+  - `model_path`: Path to a local model. If empty, the model is downloaded. (Default: `null`)
 
 #### Recording Options
-- `activation_key`: The keyboard shortcut to activate the recording and transcribing process. Separate keys with a `+`. (Default: `ctrl+shift+space`)
+- `activation_key`: Shortcut to activate recording. A keyboard combo joined with `+` (e.g. `ctrl+shift+space`), or a mouse button: `mouse_back`, `mouse_forward`, `mouse_left`, `mouse_right`, `mouse_middle`. (Default: `ctrl+shift+space`)
+- `activation_key_no_enter`: Optional second shortcut that dictates WITHOUT pressing Enter afterwards (same format as `activation_key`, e.g. `mouse_forward`). Leave empty to disable. (Default: `null`)
 - `input_backend`: The input backend to use for detecting key presses. `auto` will try to use the best available backend. (Default: `auto`)
 - `recording_mode`: The recording mode to use. Options include `continuous` (auto-restart recording after pause in speech until activation key is pressed again), `voice_activity_detection` (stop recording after pause in speech), `press_to_toggle` (stop recording when activation key is pressed again), `hold_to_record` (stop recording when activation key is released). (Default: `continuous`)
 - `sound_device`: The numeric index of the sound device to use for recording. To find device numbers, run `python -m sounddevice`. (Default: `null`)
@@ -242,7 +246,7 @@ Contributions are welcome:
 
 - [savbell/whisper-writer](https://github.com/savbell/whisper-writer) — the original WhisperWriter, which this is a fork of.
 - [ggml-org/whisper.cpp](https://github.com/ggml-org/whisper.cpp) — the Vulkan-capable Whisper engine this fork adds.
-- [OpenAI](https://openai.com/) for the Whisper model and API.
+- [OpenAI](https://openai.com/) for the Whisper model.
 - [Guillaume Klein](https://github.com/guillaumekln) / [SYSTRAN](https://github.com/SYSTRAN/faster-whisper) for the faster-whisper package.
 - All of the original [contributors](https://github.com/savbell/whisper-writer/graphs/contributors).
 
