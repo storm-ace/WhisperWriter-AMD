@@ -10,7 +10,6 @@ from ui.base_window import BaseWindow
 class MainWindow(BaseWindow):
     openSettings = pyqtSignal()
     startListening = pyqtSignal()
-    closeApp = pyqtSignal()
 
     def __init__(self):
         """
@@ -45,9 +44,11 @@ class MainWindow(BaseWindow):
 
     def closeEvent(self, event):
         """
-        Close the application when the main window is closed.
+        Hide to the system tray instead of quitting, so closing the window does not
+        kill the app. Use the tray icon's Exit action to actually quit.
         """
-        self.closeApp.emit()
+        event.ignore()
+        self.hide()
 
     def startPressed(self):
         """

@@ -1,6 +1,6 @@
 # <img src="./assets/ww-logo.png" alt="WhisperWriter icon" width="25" height="25"> WhisperWriter
 
-![version](https://img.shields.io/badge/version-1.0.5--amd-blue)
+![version](https://img.shields.io/badge/version-1.0.6--amd-blue)
 
 <p align="center">
     <img src="./assets/ww-demo-image-02.gif" alt="WhisperWriter demo gif" width="340" height="136">

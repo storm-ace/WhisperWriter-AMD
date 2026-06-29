@@ -67,7 +67,6 @@ class WhisperWriterApp(QObject):
         self.main_window = MainWindow()
         self.main_window.openSettings.connect(self.settings_window.show)
         self.main_window.startListening.connect(self.key_listener.start)
-        self.main_window.closeApp.connect(self.exit_app)
 
         if not ConfigManager.get_config_value('misc', 'hide_status_window'):
             self.status_window = StatusWindow()
@@ -128,7 +127,16 @@ class WhisperWriterApp(QObject):
         self._update_tray_status()
 
         self.tray_icon.setContextMenu(tray_menu)
+        # Double-clicking the tray icon opens the settings window.
+        self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
+
+    def _on_tray_activated(self, reason):
+        """Open settings on a double-click of the tray icon."""
+        if reason == QSystemTrayIcon.DoubleClick:
+            self.settings_window.show()
+            self.settings_window.raise_()
+            self.settings_window.activateWindow()
 
     def cleanup(self):
         if self.key_listener:
