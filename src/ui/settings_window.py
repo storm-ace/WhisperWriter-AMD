@@ -31,11 +31,13 @@ class SettingsWindow(BaseWindow):
         self.create_tabs()
         self.create_buttons()
 
-        # Connect the use_api checkbox state change
-        self.use_api_checkbox = self.findChild(QCheckBox, 'model_options_use_api_input')
-        if self.use_api_checkbox:
-            self.use_api_checkbox.stateChanged.connect(lambda: self.toggle_api_local_options(self.use_api_checkbox.isChecked()))
-            self.toggle_api_local_options(self.use_api_checkbox.isChecked())
+        # The Engine setting drives which model settings are relevant
+        # (faster-whisper -> local, whispercpp -> whispercpp, openai-api -> api).
+        # Only the matching section is shown; the legacy use_api checkbox is hidden.
+        self.engine_combo = self.findChild(QComboBox, 'model_options_engine_input')
+        if self.engine_combo:
+            self.engine_combo.currentTextChanged.connect(self.toggle_engine_options)
+            self.toggle_engine_options(self.engine_combo.currentText())
 
     def create_tabs(self):
         """Create tabs for each category in the schema."""
@@ -249,22 +251,32 @@ class SettingsWindow(BaseWindow):
                 return line_edit.text() or None
         return None
 
-    def toggle_api_local_options(self, use_api):
-        """Toggle visibility of API and local options."""
-        self.iterate_settings(lambda w, c, s, k, m: self.toggle_widget_visibility(w, c, s, k, use_api))
+    def toggle_engine_options(self, engine):
+        """Show only the model settings relevant to the selected engine."""
+        section_for = {'faster-whisper': 'local', 'whispercpp': 'whispercpp', 'openai-api': 'api'}
+        visible_section = section_for.get(engine)
 
-    def toggle_widget_visibility(self, widget, category, sub_category, key, use_api):
-        if sub_category in ['api', 'local']:
-            widget.setVisible(use_api if sub_category == 'api' else not use_api)
-            
-            # Also toggle visibility of the corresponding label and help button
-            label = self.findChild(QLabel, f"{category}_{sub_category}_{key}_label")
-            help_button = self.findChild(QToolButton, f"{category}_{sub_category}_{key}_help")
-            
-            if label:
-                label.setVisible(use_api if sub_category == 'api' else not use_api)
-            if help_button:
-                help_button.setVisible(use_api if sub_category == 'api' else not use_api)
+        def apply(widget, category, sub_category, key, meta):
+            if category != 'model_options':
+                return
+            # The legacy use_api checkbox is superseded by the Engine setting.
+            if sub_category is None and key == 'use_api':
+                self._set_row_visible(widget, category, sub_category, key, False)
+            elif sub_category in ('local', 'whispercpp', 'api'):
+                self._set_row_visible(widget, category, sub_category, key, sub_category == visible_section)
+
+        self.iterate_settings(apply)
+
+    def _set_row_visible(self, widget, category, sub_category, key, visible):
+        """Show/hide a full setting row: input widget, label and help button."""
+        widget.setVisible(visible)
+        base = f"{category}_{sub_category}_{key}" if sub_category else f"{category}_{key}"
+        label = self.findChild(QLabel, base + "_label")
+        help_button = self.findChild(QToolButton, base + "_help")
+        if label:
+            label.setVisible(visible)
+        if help_button:
+            help_button.setVisible(visible)
 
 
     def iterate_settings(self, func):
