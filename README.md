@@ -25,8 +25,8 @@ backend, which *does* run on AMD GPUs — including iGPUs.
 resident), versus ~1.2× realtime on CPU — at full `large-v3` quality.
 
 ### What this fork adds
-- A new `model_options.engine` setting: **`faster-whisper`** (original), **`whispercpp`** (this fork's
-  GPU engine, via a local HTTP server), or **`openai-api`**.
+- A new `model_options.engine` setting: **`faster-whisper`** (original CPU engine) or **`whispercpp`**
+  (this fork's GPU engine, via a local whisper.cpp HTTP server).
 - `src/whispercpp_server.py`: auto-starts/stops a `whisper-server` subprocess and keeps the model resident.
 - A tray icon that shows the active engine and whether the GPU server is running, plus a clean exit
   that also stops the server.
@@ -37,7 +37,7 @@ resident), versus ~1.2× realtime on CPU — at full `large-v3` quality.
    [Vulkan SDK](https://vulkan.lunarg.com/), [CMake](https://cmake.org/), and a C++ toolchain (MSVC or
    [MinGW-w64](https://winlibs.com/)). Then:
    ```
-   git clone --branch v1.8.1 https://github.com/ggml-org/whisper.cpp
+   git clone --branch v1.9.1 https://github.com/ggml-org/whisper.cpp
    cd whisper.cpp
    cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
    cmake --build build -j --config Release
