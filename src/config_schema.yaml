@@ -8,7 +8,7 @@ model_options:
   engine:
     value: faster-whisper
     type: str
-    description: "Transcription engine. 'faster-whisper' (in-process, CPU or NVIDIA CUDA), 'whispercpp' (local whisper.cpp server over HTTP, GPU via Vulkan — works on AMD iGPUs), or 'openai-api'."
+    description: "Transcription engine / compute target. 'faster-whisper' = in-process CPU (default, works out of the box; ctranslate2 has no AMD GPU path so it is CPU-only here). 'whispercpp' = GPU via Vulkan — the AMD GPU/iGPU option (requires a whisper.cpp Vulkan build + ggml model; see README). 'openai-api' = remote OpenAI API."
     options:
       - faster-whisper
       - whispercpp
@@ -64,12 +64,10 @@ model_options:
         - large-v2
         - large-v3
     device:
-      value: auto
+      value: cpu
       type: str
-      description: "The device to run the local Whisper model on. Use 'cuda' for NVIDIA GPUs, 'cpu' for CPU-only processing, or 'auto' to let the system automatically choose the best available device."
+      description: "Device for the faster-whisper engine. On this AMD build only 'cpu' is supported — ctranslate2 has no AMD GPU path and CUDA needs NVIDIA. For GPU acceleration on AMD, set Engine to 'whispercpp' (Vulkan) above."
       options:
-        - auto
-        - cuda
         - cpu
     compute_type:
       value: default
