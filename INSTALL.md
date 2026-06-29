@@ -80,6 +80,7 @@ A settings window opens; closing it leaves the app running in the background. Fo
 
 - `start.bat` — start with a console (double-click).
 - `start_hidden.vbs` — start hidden (no console window). Both derive their own folder, so no path editing is needed.
+- **Desktop + Start Menu shortcut**: run `powershell -ExecutionPolicy Bypass -File create_shortcut.ps1` to create shortcuts (with the app icon) that launch WhisperWriter hidden.
 - Autostart at login: copy `start_hidden.vbs` into the folder that `shell:startup` opens.
 
 ## Verify without the GUI
