@@ -3,7 +3,7 @@ import sys
 import time
 from audioplayer import AudioPlayer
 from pynput.keyboard import Controller
-from PyQt5.QtCore import QObject, QProcess
+from PyQt5.QtCore import QObject, QProcess, QSharedMemory
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction, QMessageBox
 
@@ -26,6 +26,15 @@ class WhisperWriterApp(QObject):
         super().__init__()
         self.app = QApplication(sys.argv)
         self.app.setWindowIcon(QIcon(os.path.join('assets', 'ww-logo.png')))
+
+        # Enforce a single running instance (avoids double hotkeys and server conflicts).
+        # On Windows the segment is released automatically when the process exits.
+        self._single_instance = QSharedMemory('WhisperWriter-AMD-single-instance')
+        if not self._single_instance.create(1):
+            QMessageBox.information(
+                None, 'WhisperWriter',
+                'WhisperWriter is already running — check the system tray.')
+            sys.exit(0)
 
         ConfigManager.initialize()
 
@@ -156,6 +165,9 @@ class WhisperWriterApp(QObject):
     def restart_app(self):
         """Restart the application to apply the new settings."""
         self.cleanup()
+        # Release the single-instance lock so the relaunched process can acquire it.
+        if getattr(self, '_single_instance', None) is not None:
+            self._single_instance.detach()
         QApplication.quit()
         QProcess.startDetached(sys.executable, sys.argv)
 
