@@ -1,6 +1,6 @@
 # <img src="./assets/ww-logo.png" alt="WhisperWriter icon" width="25" height="25"> WhisperWriter
 
-![version](https://img.shields.io/badge/version-1.0.8--amd-blue)
+![version](https://img.shields.io/badge/version-1.0.9--amd-blue)
 
 <p align="center">
     <img src="./assets/ww-demo-image-02.gif" alt="WhisperWriter demo gif" width="340" height="136">
@@ -61,6 +61,11 @@ resident), versus ~1.2× realtime on CPU — at full `large-v3` quality.
    (`ggml_vulkan: ... AMD Radeon ...` and `using Vulkan0 backend`), not a CPU fallback.
 
 To switch back to CPU, set `engine: faster-whisper` and restart.
+
+### Improving accuracy (optional)
+Two post-processing options fix recurring transcription errors (configurable in Settings → Post processing):
+- **Word replacements** — a deterministic find-and-replace list for words the model consistently mishears (names, brands, jargon). One rule per line: `wrong = right`. Zero latency.
+- **LLM correction** — optionally run each transcription through a second local model ([llama.cpp](https://github.com/ggml-org/llama.cpp) + Vulkan, on the same AMD GPU) that fixes punctuation, casing and obvious mis-hears **without rewriting or translating**. Default **off**; adds ~0.4–1 s. Recommended model: **Gemma-3-4B-it (Q4_K_M GGUF)** — in local testing it followed the "correct, don't rewrite" instruction better than larger Dutch/translation-focused models. Build llama.cpp the same way as whisper.cpp (`-DGGML_VULKAN=ON`), grab a GGUF model, and point `post_processing.llm_correction` at `llama-server.exe` + the model.
 
 ---
 

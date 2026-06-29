@@ -112,7 +112,9 @@ class SettingsWindow(BaseWindow):
             return self.create_device_combobox(current_value)
         if sub_category == 'whispercpp' and key == 'model_path':
             return self.create_ggml_model_combo(current_value)
-        if key == 'word_replacements':
+        if sub_category == 'llm_correction' and key == 'model_path':
+            return self.create_gguf_model_combo(current_value)
+        if key in ('word_replacements', 'system_prompt'):
             return self.create_multiline_edit(current_value)
         if meta_type == 'bool':
             return self.create_checkbox(current_value, key)
@@ -160,25 +162,35 @@ class SettingsWindow(BaseWindow):
         return widget
 
     def create_ggml_model_combo(self, value):
-        """Dropdown of ggml-*.bin models found next to the current whisper.cpp model.
+        """Dropdown of ggml-*.bin whisper models found next to the current model."""
+        return self._model_combo(value, 'ggml_model_combo', 'ggml-*.bin',
+                                 ('..', '..', '..', 'whisper.cpp', 'models'))
 
-        Stores the full path (userData) so picking a model is as easy as for
-        faster-whisper. Drop new ggml-*.bin files in the same folder to see them here.
+    def create_gguf_model_combo(self, value):
+        """Dropdown of *.gguf LLM models found next to the current model."""
+        return self._model_combo(value, 'gguf_model_combo', '*.gguf',
+                                 ('..', '..', '..', 'llm-models'))
+
+    def _model_combo(self, value, prop, pattern, fallback_parts):
+        """Build a combobox of model files matching `pattern` in the model's folder.
+
+        Stores the full path as userData. Drop new matching files in the same folder
+        to see them appear here.
         """
         import glob
         widget = QComboBox()
-        widget.setProperty('ggml_model_combo', True)
+        widget.setProperty(prop, True)
         search_dir = os.path.dirname(value) if value else ''
         if not search_dir or not os.path.isdir(search_dir):
-            guess = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'whisper.cpp', 'models'))
+            guess = os.path.abspath(os.path.join(os.path.dirname(__file__), *fallback_parts))
             search_dir = guess if os.path.isdir(guess) else search_dir
-        found = sorted(glob.glob(os.path.join(search_dir, 'ggml-*.bin'))) if search_dir and os.path.isdir(search_dir) else []
+        found = sorted(glob.glob(os.path.join(search_dir, pattern))) if search_dir and os.path.isdir(search_dir) else []
         for path in found:
             widget.addItem(os.path.basename(path), path)
         if value and value not in found:
             widget.addItem(f'{os.path.basename(value)}  (current)', value)
         if widget.count() == 0:
-            widget.addItem('(no ggml-*.bin models found)', value or None)
+            widget.addItem(f'(no {pattern} models found)', value or None)
         self._select_by_data(widget, value)
         return widget
 
@@ -269,7 +281,7 @@ class SettingsWindow(BaseWindow):
 
     def set_widget_value(self, widget, value, value_type):
         """Set the value of the widget."""
-        if isinstance(widget, QComboBox) and (widget.property('device_combo') or widget.property('ggml_model_combo')):
+        if isinstance(widget, QComboBox) and (widget.property('device_combo') or widget.property('ggml_model_combo') or widget.property('gguf_model_combo')):
             self._select_by_data(widget, value)
         elif isinstance(widget, QCheckBox):
             widget.setChecked(value)
@@ -287,7 +299,7 @@ class SettingsWindow(BaseWindow):
 
     def get_widget_value_typed(self, widget, value_type):
         """Get the value of the widget with proper typing."""
-        if isinstance(widget, QComboBox) and (widget.property('device_combo') or widget.property('ggml_model_combo')):
+        if isinstance(widget, QComboBox) and (widget.property('device_combo') or widget.property('ggml_model_combo') or widget.property('gguf_model_combo')):
             return widget.currentData()
         elif isinstance(widget, QCheckBox):
             return widget.isChecked()

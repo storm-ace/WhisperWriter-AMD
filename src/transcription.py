@@ -110,6 +110,45 @@ def transcribe_whispercpp(audio_data):
     return response.json().get('text', '')
 
 
+DEFAULT_LLM_SYSTEM_PROMPT = (
+    "Je bent een spellingscorrector voor gedicteerde tekst. Geef ALLEEN de gecorrigeerde "
+    "tekst terug: fix interpunctie, hoofdletters en duidelijk verkeerd verstane woorden. "
+    "Behoud exact dezelfde woorden en betekenis; herschrijf niet, vat niet samen, voeg niets toe. "
+    "Als de tekst een vraag is, corrigeer je alleen de schrijfwijze en beantwoord je de vraag NIET. "
+    "Antwoord uitsluitend met de gecorrigeerde tekst, zonder aanhalingstekens of uitleg. "
+    "Behoud de taal (Nederlands of Engels)."
+)
+
+
+def correct_with_llm(text, opts):
+    """
+    Clean up a transcription via a local llama.cpp server (GPU). Fail-open: on any
+    error, timeout or empty reply, the original text is returned unchanged so a problem
+    with the LLM never blocks dictation.
+    """
+    try:
+        host = opts.get('host') or '127.0.0.1'
+        port = int(opts.get('port') or 8081)
+        system = opts.get('system_prompt') or DEFAULT_LLM_SYSTEM_PROMPT
+        body = {
+            'messages': [
+                {'role': 'system', 'content': system},
+                {'role': 'user', 'content': text},
+            ],
+            'temperature': float(opts.get('temperature') or 0.0),
+            'max_tokens': len(text.split()) * 3 + 24,
+            'cache_prompt': True,
+        }
+        resp = requests.post(f'http://{host}:{port}/v1/chat/completions',
+                             json=body, timeout=float(opts.get('timeout_s') or 8))
+        resp.raise_for_status()
+        out = (resp.json()['choices'][0]['message']['content'] or '').strip()
+        return out or text
+    except Exception as e:
+        ConfigManager.console_print(f'LLM correction skipped ({e}); using raw text.')
+        return text
+
+
 def apply_word_replacements(text, rules_text):
     """Apply user-defined 'wrong = right' replacements (whole-word, case-insensitive).
 
@@ -139,6 +178,11 @@ def post_process_transcription(transcription):
     transcription = transcription.strip()
     post_processing = ConfigManager.get_config_section('post_processing')
     transcription = apply_word_replacements(transcription, post_processing.get('word_replacements'))
+
+    llm = post_processing.get('llm_correction') or {}
+    if llm.get('enabled') and transcription:
+        transcription = correct_with_llm(transcription, llm)
+
     if post_processing['remove_trailing_period'] and transcription.endswith('.'):
         transcription = transcription[:-1]
     if post_processing['add_trailing_space']:

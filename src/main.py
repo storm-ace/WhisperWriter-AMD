@@ -16,6 +16,7 @@ from transcription import create_local_model, resolve_engine
 from input_simulation import InputSimulator
 from utils import ConfigManager
 from whispercpp_server import WhisperCppServer
+from llamacpp_server import LlamaCppServer
 
 
 class WhisperWriterApp(QObject):
@@ -70,6 +71,13 @@ class WhisperWriterApp(QObject):
                 self.whispercpp_server.start()
         else:  # faster-whisper
             self.local_model = create_local_model()
+
+        # Optional local-LLM transcription-correction server (GPU via Vulkan, default off).
+        self.llama_server = None
+        llm = ConfigManager.get_config_section('post_processing').get('llm_correction', {})
+        if llm.get('enabled') and llm.get('auto_start', True):
+            self.llama_server = LlamaCppServer()
+            self.llama_server.start()
 
         self.result_thread = None
 
@@ -154,6 +162,8 @@ class WhisperWriterApp(QObject):
             self.input_simulator.cleanup()
         if getattr(self, 'whispercpp_server', None):
             self.whispercpp_server.stop()
+        if getattr(self, 'llama_server', None):
+            self.llama_server.stop()
 
     def exit_app(self):
         """

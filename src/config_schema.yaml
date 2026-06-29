@@ -185,6 +185,61 @@ post_processing:
     type: str
     description: "Automatic find-and-replace applied after each transcription, to fix words the model consistently mishears (names, brands, jargon). One rule per line in the form 'wrong = right' (or 'wrong -> right'). Whole-word and case-insensitive. Example: cloud code = Claude Code"
 
+  # Optional local-LLM correction step (GPU via a local llama.cpp server).
+  llm_correction:
+    enabled:
+      value: false
+      type: bool
+      description: "Run each transcription through a local LLM (llama.cpp/Vulkan) to fix punctuation, casing and obviously mis-heard words, without rewriting. Adds latency (~0.4-1s) and needs a llama-server + GGUF model. Off by default."
+    binary_path:
+      value: null
+      type: str
+      description: "Full path to llama-server.exe (llama.cpp built with Vulkan)."
+    model_path:
+      value: null
+      type: str
+      description: "Full path to the GGUF model used for correction (e.g. google_gemma-3-4b-it-Q4_K_M.gguf)."
+    lib_path:
+      value: null
+      type: str
+      description: "Directory with extra runtime DLLs the server needs (the MinGW bin dir); leave empty for MSVC builds."
+    host:
+      value: 127.0.0.1
+      type: str
+      description: "Host the llama.cpp server listens on."
+    port:
+      value: 8081
+      type: int
+      description: "Port for the llama.cpp server (keep different from the whisper.cpp server)."
+    n_gpu_layers:
+      value: 999
+      type: int
+      description: "Number of model layers to offload to the GPU. 999 = all (recommended)."
+    context_size:
+      value: 2048
+      type: int
+      description: "Context window for the correction model."
+    n_threads:
+      value: null
+      type: int
+      description: "CPU threads for the server. Leave empty for the default."
+    temperature:
+      value: 0.0
+      type: float
+      description: "Sampling temperature for the correction. 0.0 = most deterministic (recommended)."
+    system_prompt:
+      value: ""
+      type: str
+      description: "System prompt that instructs the LLM how to correct. Leave empty to use the built-in default (correct only, never rewrite or answer)."
+    timeout_s:
+      value: 8
+      type: int
+      description: "Max seconds to wait for the LLM; on timeout the raw transcription is used unchanged."
+    auto_start:
+      value: true
+      type: bool
+      description: "Let WhisperWriter launch and stop the llama.cpp server automatically when LLM correction is enabled."
+
 # Miscellaneous settings
 misc:
   print_to_terminal:

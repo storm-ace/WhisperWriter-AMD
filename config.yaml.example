@@ -42,6 +42,22 @@ post_processing:
   remove_trailing_period: false
   restore_clipboard: true
   writing_key_press_delay: 0.005
+  # Fix words the model consistently mishears (one rule per line: wrong = right)
+  word_replacements: ""
+  # Optional local-LLM correction (GPU via a second llama.cpp server). Off by default.
+  llm_correction:
+    enabled: false
+    binary_path: C:\path\to\llama.cpp\build\bin\llama-server.exe
+    model_path: C:\path\to\llm-models\google_gemma-3-4b-it-Q4_K_M.gguf   # GGUF
+    lib_path: C:\path\to\mingw64\bin    # only for MinGW builds
+    host: 127.0.0.1
+    port: 8081                          # different from the whisper.cpp server (8080)
+    n_gpu_layers: 999
+    context_size: 2048
+    temperature: 0.0
+    system_prompt: ""                   # empty = built-in "correct, don't rewrite" prompt
+    timeout_s: 8
+    auto_start: true
 misc:
   print_to_terminal: true
   hide_status_window: false
