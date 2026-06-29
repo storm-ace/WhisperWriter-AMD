@@ -214,7 +214,8 @@ If any of the configuration options are invalid or not provided, the program wil
 
 ## Known Issues
 
-You can see all reported issues and their current status in our [Issue Tracker](https://github.com/savbell/whisper-writer/issues). If you encounter a problem, please [open a new issue](https://github.com/savbell/whisper-writer/issues/new) with a detailed description and reproduction steps, if possible.
+- For problems with **this fork's AMD GPU engine** (whisper.cpp / Vulkan / the `whispercpp` engine), please [open an issue on this repo](https://github.com/storm-ace/WhisperWriter-AMD/issues/new).
+- For general WhisperWriter behaviour shared with upstream, see the [upstream issue tracker](https://github.com/savbell/whisper-writer/issues).
 
 ## Roadmap
 Below are features I am planning to add in the near future:
@@ -233,14 +234,20 @@ Implemented features can be found in the [CHANGELOG](CHANGELOG.md).
 
 ## Contributing
 
-Contributions are welcome! I created this project for my own personal use and didn't expect it to get much attention, so I haven't put much effort into testing or making it easy for others to contribute. If you have ideas or suggestions, feel free to [open a pull request](https://github.com/savbell/whisper-writer/pulls) or [create a new issue](https://github.com/savbell/whisper-writer/issues/new). I'll do my best to review and respond as time allows.
+Contributions are welcome:
+- **This fork** (AMD GPU engine, whisper.cpp/Vulkan integration): [open a pull request](https://github.com/storm-ace/WhisperWriter-AMD/pulls) or [issue](https://github.com/storm-ace/WhisperWriter-AMD/issues/new) here.
+- **General WhisperWriter** features/fixes that aren't AMD-specific are best contributed to the [upstream project](https://github.com/savbell/whisper-writer), so everyone benefits.
 
 ## Credits
 
-- [OpenAI](https://openai.com/) for creating the Whisper model and providing the API. Plus [ChatGPT](https://chat.openai.com/), which was used to write a lot of the initial code for this project.
-- [Guillaume Klein](https://github.com/guillaumekln) for creating the [faster-whisper Python package](https://github.com/SYSTRAN/faster-whisper).
-- All of our [contributors](https://github.com/savbell/whisper-writer/graphs/contributors)!
+- [savbell/whisper-writer](https://github.com/savbell/whisper-writer) — the original WhisperWriter, which this is a fork of.
+- [ggml-org/whisper.cpp](https://github.com/ggml-org/whisper.cpp) — the Vulkan-capable Whisper engine this fork adds.
+- [OpenAI](https://openai.com/) for the Whisper model and API.
+- [Guillaume Klein](https://github.com/guillaumekln) / [SYSTRAN](https://github.com/SYSTRAN/faster-whisper) for the faster-whisper package.
+- All of the original [contributors](https://github.com/savbell/whisper-writer/graphs/contributors).
 
 ## License
 
-This project is licensed under the GNU General Public License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the **GNU General Public License v3.0** (GPL-3.0). See the [LICENSE](LICENSE) file for the full text.
+
+This repository is a **modified version** of [savbell/whisper-writer](https://github.com/savbell/whisper-writer). The modifications — chiefly the whisper.cpp + Vulkan GPU engine for AMD GPUs/iGPUs — were added in June 2026. As required by the GPL, this fork remains licensed under GPL-3.0 and preserves the original license and authorship; the upstream code is © its respective WhisperWriter authors.
