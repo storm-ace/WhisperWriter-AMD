@@ -27,6 +27,9 @@ class WhisperWriterApp(QObject):
         super().__init__()
         self.app = QApplication(sys.argv)
         self.app.setWindowIcon(QIcon(os.path.join('assets', 'ww-logo.png')))
+        # This is a tray app: closing a window (e.g. the settings window) must NOT quit
+        # the app. Only the tray's Exit action / the restart-on-save quit explicitly.
+        self.app.setQuitOnLastWindowClosed(False)
 
         # Enforce a single running instance (avoids double hotkeys and server conflicts).
         # Retry briefly: the in-app restart (after saving settings) launches the new
