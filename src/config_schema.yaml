@@ -180,6 +180,10 @@ post_processing:
     value: true
     type: bool
     description: "Only for input_method 'clipboard'. Set to true to restore the previous clipboard contents after pasting. Set to false to leave the dictated text on the clipboard, so you can manually Ctrl+V again if the automatic paste failed."
+  word_replacements:
+    value: ""
+    type: str
+    description: "Automatic find-and-replace applied after each transcription, to fix words the model consistently mishears (names, brands, jargon). One rule per line in the form 'wrong = right' (or 'wrong -> right'). Whole-word and case-insensitive. Example: cloud code = Claude Code"
 
 # Miscellaneous settings
 misc:

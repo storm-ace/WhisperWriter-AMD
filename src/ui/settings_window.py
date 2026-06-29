@@ -2,7 +2,8 @@ import os
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox, QCheckBox,
-    QMessageBox, QTabWidget, QWidget, QSizePolicy, QSpacerItem, QToolButton, QStyle, QFileDialog
+    QMessageBox, QTabWidget, QWidget, QSizePolicy, QSpacerItem, QToolButton, QStyle, QFileDialog,
+    QPlainTextEdit
 )
 from PyQt5.QtCore import Qt, QCoreApplication, QProcess, pyqtSignal
 
@@ -111,6 +112,8 @@ class SettingsWindow(BaseWindow):
             return self.create_device_combobox(current_value)
         if sub_category == 'whispercpp' and key == 'model_path':
             return self.create_ggml_model_combo(current_value)
+        if key == 'word_replacements':
+            return self.create_multiline_edit(current_value)
         if meta_type == 'bool':
             return self.create_checkbox(current_value, key)
         elif meta_type == 'str' and 'options' in meta:
@@ -186,6 +189,12 @@ class SettingsWindow(BaseWindow):
                 widget.setCurrentIndex(i)
                 return
         widget.setCurrentIndex(0)  # fall back to the first item
+
+    def create_multiline_edit(self, value):
+        widget = QPlainTextEdit(value or '')
+        widget.setFixedHeight(90)
+        widget.setPlaceholderText('cloud code = Claude Code\nnitea = Nitea')
+        return widget
 
     def create_line_edit(self, value, key=None):
         widget = QLineEdit(value)
@@ -264,6 +273,8 @@ class SettingsWindow(BaseWindow):
             self._select_by_data(widget, value)
         elif isinstance(widget, QCheckBox):
             widget.setChecked(value)
+        elif isinstance(widget, QPlainTextEdit):
+            widget.setPlainText(str(value) if value is not None else '')
         elif isinstance(widget, QComboBox):
             widget.setCurrentText(value)
         elif isinstance(widget, QLineEdit):
@@ -280,6 +291,8 @@ class SettingsWindow(BaseWindow):
             return widget.currentData()
         elif isinstance(widget, QCheckBox):
             return widget.isChecked()
+        elif isinstance(widget, QPlainTextEdit):
+            return widget.toPlainText() or None
         elif isinstance(widget, QComboBox):
             return widget.currentText() or None
         elif isinstance(widget, QLineEdit):

@@ -110,12 +110,35 @@ def transcribe_whispercpp(audio_data):
     return response.json().get('text', '')
 
 
+def apply_word_replacements(text, rules_text):
+    """Apply user-defined 'wrong = right' replacements (whole-word, case-insensitive).
+
+    One rule per line, in the form 'wrong = right' or 'wrong -> right'. Used to fix
+    words the model consistently mishears (names, brands, jargon).
+    """
+    import re
+    for line in (rules_text or '').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        sep = '->' if '->' in line else ('=' if '=' in line else None)
+        if not sep:
+            continue
+        wrong, right = line.split(sep, 1)
+        wrong, right = wrong.strip(), right.strip()
+        if not wrong:
+            continue
+        text = re.sub(r'\b' + re.escape(wrong) + r'\b', right, text, flags=re.IGNORECASE)
+    return text
+
+
 def post_process_transcription(transcription):
     """
     Apply post-processing to the transcription.
     """
     transcription = transcription.strip()
     post_processing = ConfigManager.get_config_section('post_processing')
+    transcription = apply_word_replacements(transcription, post_processing.get('word_replacements'))
     if post_processing['remove_trailing_period'] and transcription.endswith('.'):
         transcription = transcription[:-1]
     if post_processing['add_trailing_space']:
