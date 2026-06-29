@@ -1,0 +1,54 @@
+# Example configuration for WhisperWriter-AMD.
+# Copy to src/config.yaml and edit the paths to match your machine.
+# This example uses the whisper.cpp Vulkan GPU engine (for AMD GPUs / iGPUs on Windows).
+# Any options you omit fall back to the defaults in src/config_schema.yaml.
+model_options:
+  engine: whispercpp          # faster-whisper | whispercpp | openai-api
+  common:
+    initial_prompt: null      # optional: bias the transcription with domain terms
+    language: null            # e.g. 'en', 'nl'; null = auto-detect
+    temperature: 0.0
+  # Used when engine = whispercpp (local whisper.cpp server, GPU via Vulkan)
+  whispercpp:
+    auto_start: true          # let WhisperWriter launch/stop the server
+    binary_path: C:\path\to\whisper.cpp\build\bin\whisper-server.exe
+    model_path: C:\path\to\whisper.cpp\models\ggml-large-v3.bin   # ggml format!
+    lib_path: C:\path\to\mingw64\bin    # dir with libstdc++/libgomp DLLs (only if self-built with MinGW); leave null for MSVC builds
+    host: 127.0.0.1
+    port: 8080
+    n_threads: null
+  # Used when engine = faster-whisper (original CPU/CUDA engine)
+  local:
+    model: large-v3
+    device: auto              # cuda | cpu | auto
+    compute_type: default     # default | float32 | float16 | int8
+    condition_on_previous_text: true
+    vad_filter: true
+    model_path: null
+  # Used when engine = openai-api
+  api:
+    model: whisper-1
+    base_url: https://api.openai.com/v1
+    api_key: null
+  use_api: false              # legacy; only used when 'engine' is empty
+recording_options:
+  activation_key: ctrl+shift+space
+  activation_key_no_enter: null   # optional second shortcut that never presses Enter
+  recording_mode: hold_to_record  # continuous | voice_activity_detection | press_to_toggle | hold_to_record
+  input_backend: pynput
+  sample_rate: 16000
+  silence_duration: 900
+  min_duration: 100
+  sound_device: null
+post_processing:
+  input_method: clipboard     # clipboard (paste via Ctrl+V) | pynput | ydotool | dotool
+  press_enter: false          # press Enter after inserting (e.g. to submit a chat message)
+  add_trailing_space: true
+  remove_capitalization: false
+  remove_trailing_period: false
+  restore_clipboard: true
+  writing_key_press_delay: 0.005
+misc:
+  print_to_terminal: true
+  hide_status_window: false
+  noise_on_completion: false
