@@ -107,6 +107,8 @@ class SettingsWindow(BaseWindow):
         meta_type = meta.get('type')
         current_value = self.get_config_value(category, sub_category, key, meta)
 
+        if key == 'sound_device':
+            return self.create_device_combobox(current_value)
         if meta_type == 'bool':
             return self.create_checkbox(current_value, key)
         elif meta_type == 'str' and 'options' in meta:
@@ -127,6 +129,38 @@ class SettingsWindow(BaseWindow):
         widget.addItems(options)
         widget.setCurrentText(value)
         return widget
+
+    def create_device_combobox(self, value):
+        """Combobox listing available input devices for `sound_device`.
+
+        Each item stores the device index as userData (None = system default), so the
+        config keeps the numeric index while the user picks a readable microphone name.
+        """
+        widget = QComboBox()
+        widget.setProperty('device_combo', True)
+        widget.addItem('Default (system microphone)', None)
+        try:
+            import sounddevice as sd
+            seen = set()
+            for dev in sd.query_devices():
+                name = dev['name']
+                if dev.get('max_input_channels', 0) > 0 and name not in seen:
+                    seen.add(name)
+                    # Store the device name (not the index): indexes shift when devices
+                    # connect/disconnect, names are stable. sounddevice accepts either.
+                    widget.addItem(name, name)
+        except Exception as e:
+            ConfigManager.console_print(f'Could not list audio input devices: {e}')
+        self._select_device(widget, value)
+        return widget
+
+    def _select_device(self, widget, value):
+        """Select the combobox item whose stored device matches `value`."""
+        for i in range(widget.count()):
+            if widget.itemData(i) == value:
+                widget.setCurrentIndex(i)
+                return
+        widget.setCurrentIndex(0)  # fall back to default (system microphone)
 
     def create_line_edit(self, value, key=None):
         widget = QLineEdit(value)
@@ -201,7 +235,9 @@ class SettingsWindow(BaseWindow):
 
     def set_widget_value(self, widget, value, value_type):
         """Set the value of the widget."""
-        if isinstance(widget, QCheckBox):
+        if isinstance(widget, QComboBox) and widget.property('device_combo'):
+            self._select_device(widget, value)
+        elif isinstance(widget, QCheckBox):
             widget.setChecked(value)
         elif isinstance(widget, QComboBox):
             widget.setCurrentText(value)
@@ -215,7 +251,9 @@ class SettingsWindow(BaseWindow):
 
     def get_widget_value_typed(self, widget, value_type):
         """Get the value of the widget with proper typing."""
-        if isinstance(widget, QCheckBox):
+        if isinstance(widget, QComboBox) and widget.property('device_combo'):
+            return widget.currentData()
+        elif isinstance(widget, QCheckBox):
             return widget.isChecked()
         elif isinstance(widget, QComboBox):
             return widget.currentText() or None

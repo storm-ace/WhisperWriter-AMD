@@ -1,6 +1,6 @@
 # <img src="./assets/ww-logo.png" alt="WhisperWriter icon" width="25" height="25"> WhisperWriter
 
-![version](https://img.shields.io/badge/version-1.0.3--amd-blue)
+![version](https://img.shields.io/badge/version-1.0.4--amd-blue)
 
 <p align="center">
     <img src="./assets/ww-demo-image-02.gif" alt="WhisperWriter demo gif" width="340" height="136">
@@ -197,7 +197,7 @@ WhisperWriter uses a configuration file to customize its behaviour. To set up th
 - `activation_key_no_enter`: Optional second shortcut that dictates WITHOUT pressing Enter afterwards (same format as `activation_key`, e.g. `mouse_forward`). Leave empty to disable. (Default: `null`)
 - `input_backend`: The input backend to use for detecting key presses. `auto` will try to use the best available backend. (Default: `auto`)
 - `recording_mode`: The recording mode to use. Options include `continuous` (auto-restart recording after pause in speech until activation key is pressed again), `voice_activity_detection` (stop recording after pause in speech), `press_to_toggle` (stop recording when activation key is pressed again), `hold_to_record` (stop recording when activation key is released). (Default: `continuous`)
-- `sound_device`: The numeric index of the sound device to use for recording. To find device numbers, run `python -m sounddevice`. (Default: `null`)
+- `sound_device`: Input microphone. In the Settings window this is a dropdown of available microphones; in the config it is stored as the device name (or a numeric index), or empty for the system default. (Default: `null`)
 - `sample_rate`: The sample rate in Hz to use for recording. (Default: `16000`)
 - `silence_duration`: The duration in milliseconds to wait for silence before stopping the recording. (Default: `900`)
 - `min_duration`: The minimum duration in milliseconds for a recording to be processed. Recordings shorter than this will be discarded. (Default: `100`)
