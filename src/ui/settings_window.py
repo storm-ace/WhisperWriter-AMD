@@ -109,6 +109,8 @@ class SettingsWindow(BaseWindow):
 
         if key == 'sound_device':
             return self.create_device_combobox(current_value)
+        if sub_category == 'whispercpp' and key == 'model_path':
+            return self.create_ggml_model_combo(current_value)
         if meta_type == 'bool':
             return self.create_checkbox(current_value, key)
         elif meta_type == 'str' and 'options' in meta:
@@ -151,16 +153,39 @@ class SettingsWindow(BaseWindow):
                     widget.addItem(name, name)
         except Exception as e:
             ConfigManager.console_print(f'Could not list audio input devices: {e}')
-        self._select_device(widget, value)
+        self._select_by_data(widget, value)
         return widget
 
-    def _select_device(self, widget, value):
-        """Select the combobox item whose stored device matches `value`."""
+    def create_ggml_model_combo(self, value):
+        """Dropdown of ggml-*.bin models found next to the current whisper.cpp model.
+
+        Stores the full path (userData) so picking a model is as easy as for
+        faster-whisper. Drop new ggml-*.bin files in the same folder to see them here.
+        """
+        import glob
+        widget = QComboBox()
+        widget.setProperty('ggml_model_combo', True)
+        search_dir = os.path.dirname(value) if value else ''
+        if not search_dir or not os.path.isdir(search_dir):
+            guess = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'whisper.cpp', 'models'))
+            search_dir = guess if os.path.isdir(guess) else search_dir
+        found = sorted(glob.glob(os.path.join(search_dir, 'ggml-*.bin'))) if search_dir and os.path.isdir(search_dir) else []
+        for path in found:
+            widget.addItem(os.path.basename(path), path)
+        if value and value not in found:
+            widget.addItem(f'{os.path.basename(value)}  (current)', value)
+        if widget.count() == 0:
+            widget.addItem('(no ggml-*.bin models found)', value or None)
+        self._select_by_data(widget, value)
+        return widget
+
+    def _select_by_data(self, widget, value):
+        """Select the combobox item whose stored userData matches `value`."""
         for i in range(widget.count()):
             if widget.itemData(i) == value:
                 widget.setCurrentIndex(i)
                 return
-        widget.setCurrentIndex(0)  # fall back to default (system microphone)
+        widget.setCurrentIndex(0)  # fall back to the first item
 
     def create_line_edit(self, value, key=None):
         widget = QLineEdit(value)
@@ -235,8 +260,8 @@ class SettingsWindow(BaseWindow):
 
     def set_widget_value(self, widget, value, value_type):
         """Set the value of the widget."""
-        if isinstance(widget, QComboBox) and widget.property('device_combo'):
-            self._select_device(widget, value)
+        if isinstance(widget, QComboBox) and (widget.property('device_combo') or widget.property('ggml_model_combo')):
+            self._select_by_data(widget, value)
         elif isinstance(widget, QCheckBox):
             widget.setChecked(value)
         elif isinstance(widget, QComboBox):
@@ -251,7 +276,7 @@ class SettingsWindow(BaseWindow):
 
     def get_widget_value_typed(self, widget, value_type):
         """Get the value of the widget with proper typing."""
-        if isinstance(widget, QComboBox) and widget.property('device_combo'):
+        if isinstance(widget, QComboBox) and (widget.property('device_combo') or widget.property('ggml_model_combo')):
             return widget.currentData()
         elif isinstance(widget, QCheckBox):
             return widget.isChecked()
