@@ -32,8 +32,8 @@ model_options:
     api_key: null
   use_api: false              # legacy; only used when 'engine' is empty
 recording_options:
-  activation_key: ctrl+shift+space
-  activation_key_no_enter: null   # optional second shortcut that never presses Enter
+  activation_key: ctrl+shift+space   # also supports mouse buttons: mouse_back / mouse_forward / mouse_left / mouse_right / mouse_middle
+  activation_key_no_enter: null      # optional second shortcut that never presses Enter (e.g. mouse_forward)
   recording_mode: hold_to_record  # continuous | voice_activity_detection | press_to_toggle | hold_to_record
   input_backend: pynput
   sample_rate: 16000

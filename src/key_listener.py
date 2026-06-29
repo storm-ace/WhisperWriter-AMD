@@ -810,27 +810,36 @@ class PynputBackend(InputBackend):
             self.mouse_listener.stop()
             self.mouse_listener = None
 
-    def _translate_key_event(self, native_event) -> tuple[KeyCode, InputEvent]:
-        """Translate a pynput event to our internal event representation."""
+    def _translate_key_event(self, native_event) -> tuple[KeyCode | None, InputEvent | None]:
+        """Translate a pynput event to our internal event representation.
+
+        Returns (None, None) for keys/buttons we don't map, so unmapped input is
+        ignored rather than being misread as another key.
+        """
         pynput_key, is_press = native_event
-        key_code = self.key_map.get(pynput_key, KeyCode.SPACE)
+        key_code = self.key_map.get(pynput_key)
+        if key_code is None:
+            return None, None
         event_type = InputEvent.KEY_PRESS if is_press else InputEvent.KEY_RELEASE
         return key_code, event_type
 
     def _on_keyboard_press(self, key):
         """Handle keyboard press events."""
-        translated_event = self._translate_key_event((key, True))
-        self.on_input_event(translated_event)
+        key_code, event_type = self._translate_key_event((key, True))
+        if key_code is not None:
+            self.on_input_event((key_code, event_type))
 
     def _on_keyboard_release(self, key):
         """Handle keyboard release events."""
-        translated_event = self._translate_key_event((key, False))
-        self.on_input_event(translated_event)
+        key_code, event_type = self._translate_key_event((key, False))
+        if key_code is not None:
+            self.on_input_event((key_code, event_type))
 
     def _on_mouse_click(self, x, y, button, pressed):
         """Handle mouse click events."""
-        translated_event = self._translate_key_event((button, pressed))
-        self.on_input_event(translated_event)
+        key_code, event_type = self._translate_key_event((button, pressed))
+        if key_code is not None:
+            self.on_input_event((key_code, event_type))
 
     def _create_key_map(self):
         """Create a mapping from pynput keys to our internal KeyCode enum."""
@@ -974,6 +983,10 @@ class PynputBackend(InputBackend):
             self.mouse.Button.left: KeyCode.MOUSE_LEFT,
             self.mouse.Button.right: KeyCode.MOUSE_RIGHT,
             self.mouse.Button.middle: KeyCode.MOUSE_MIDDLE,
+            # Side / thumb buttons. On Windows pynput exposes the two extra buttons
+            # as x1/x2; guarded because not every platform defines them.
+            **({self.mouse.Button.x1: KeyCode.MOUSE_BACK} if hasattr(self.mouse.Button, 'x1') else {}),
+            **({self.mouse.Button.x2: KeyCode.MOUSE_FORWARD} if hasattr(self.mouse.Button, 'x2') else {}),
         }
 
     def on_input_event(self, event):
