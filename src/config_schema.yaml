@@ -127,11 +127,11 @@ recording_options:
   activation_key:
     value: ctrl+shift+space
     type: str
-    description: "The keyboard shortcut to activate the recording and transcribing process. Separate keys with a '+'."
+    description: "Shortcut to activate recording/transcribing. Keyboard keys joined with '+' (e.g. ctrl+shift+space), or a mouse button: mouse_back, mouse_forward, mouse_left, mouse_right, mouse_middle."
   activation_key_no_enter:
     value: null
     type: str
-    description: "Optional second shortcut that dictates WITHOUT pressing Enter afterwards, regardless of the press_enter setting. Leave empty to disable. Separate keys with a '+'."
+    description: "Optional second shortcut that dictates WITHOUT pressing Enter afterwards, regardless of the press_enter setting. Same format as activation_key (keyboard combo or a mouse button, e.g. mouse_forward). Leave empty to disable."
   input_backend:
     value: auto
     type: str
