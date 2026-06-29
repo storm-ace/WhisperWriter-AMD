@@ -123,7 +123,7 @@ class SettingsWindow(BaseWindow):
         elif meta_type == 'str':
             return self.create_line_edit(current_value, key)
         elif meta_type in ['int', 'float']:
-            return self.create_line_edit(str(current_value))
+            return self.create_line_edit('' if current_value is None else str(current_value))
         return None
 
     def create_checkbox(self, value, key):
@@ -308,13 +308,15 @@ class SettingsWindow(BaseWindow):
         elif isinstance(widget, QComboBox):
             return widget.currentText() or None
         elif isinstance(widget, QLineEdit):
-            text = widget.text()
-            if value_type == 'int':
-                return int(text) if text else None
-            elif value_type == 'float':
-                return float(text) if text else None
-            else:
-                return text or None
+            text = widget.text().strip()
+            if value_type in ('int', 'float'):
+                # Robust parse: empty, "None" or any non-numeric input -> None,
+                # so a stray value can never crash the save (which aborts the app).
+                try:
+                    return int(text) if value_type == 'int' else float(text)
+                except (ValueError, TypeError):
+                    return None
+            return text or None
         elif isinstance(widget, QWidget) and widget.layout():
             # This is for the model_path widget
             line_edit = widget.layout().itemAt(0).widget()
