@@ -8,17 +8,18 @@ changed — so there is no app restart.
 
 import os
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication
-from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout,
-                               QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
-                               QScrollArea, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QLabel, QLineEdit,
+                               QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QWidget)
 
 import claude_integration
+from engine import EngineState
+from llamacpp_server import SERVER_KEYS as LLM_SERVER_KEYS
 from sessions import default_db_path
+from transcription import EngineKind
 from ui import theme
-from ui.widgets import Toggle
+from ui.widgets import Toggle, hbox, vbox
 from utils import ConfigManager
 
 LABELS = {
@@ -43,31 +44,34 @@ LABELS = {
     'smart_terminal_mode': 'Claude Code aware typing', 'suppress_enter': 'Never press Enter in Claude Code',
     'backtick_filenames': 'Wrap file names in backticks',
     'min_speech_duration': 'Minimum speech (ms)', 'vad_aggressiveness': 'Noise rejection (0–3)',
-    'filter_hallucinations': 'Filter Whisper hallucinations',
+    'filter_hallucinations': 'Filter Whisper hallucinations', 'theme': 'Theme', 'accent': 'Accent colour',
 }
 
 MULTILINE = {'vocabulary', 'initial_prompt', 'word_replacements', 'system_prompt'}
 
-E = 'model_options'
+MODEL = 'model_options'
+LLM = ('post_processing', 'llm_correction')
+LLM_TUNING_KEYS = ('temperature', 'timeout_s', 'system_prompt')
+
 SECTIONS = [
     ('engine', 'Engine & GPU', 'chip',
      'Pick where Whisper runs. AMD (and Intel) GPUs use whisper.cpp over Vulkan; NVIDIA can use either engine.',
-     [(E, 'common', 'language'), (E, 'common', 'temperature'),
+     [(MODEL, 'common', 'language'), (MODEL, 'common', 'temperature'),
       ('#whispercpp', 'whisper.cpp server'),
-      (E, 'whispercpp', 'binary_path'), (E, 'whispercpp', 'model_path'),
-      (E, 'whispercpp', 'lib_path'), (E, 'whispercpp', 'auto_start'), (E, 'whispercpp', 'host'),
-      (E, 'whispercpp', 'port'), (E, 'whispercpp', 'n_threads'),
+      (MODEL, 'whispercpp', 'binary_path'), (MODEL, 'whispercpp', 'model_path'),
+      (MODEL, 'whispercpp', 'lib_path'), (MODEL, 'whispercpp', 'auto_start'),
+      (MODEL, 'whispercpp', 'host'), (MODEL, 'whispercpp', 'port'), (MODEL, 'whispercpp', 'n_threads'),
       ('#local', 'faster-whisper'),
-      (E, 'local', 'model'), (E, 'local', 'device'), (E, 'local', 'compute_type'),
-      (E, 'local', 'model_path'), (E, 'local', 'vad_filter'),
-      (E, 'local', 'condition_on_previous_text')]),
+      (MODEL, 'local', 'model'), (MODEL, 'local', 'device'), (MODEL, 'local', 'compute_type'),
+      (MODEL, 'local', 'model_path'), (MODEL, 'local', 'vad_filter'),
+      (MODEL, 'local', 'condition_on_previous_text')]),
     ('hotkeys', 'Hotkeys & recording', 'keyboard',
      'Shortcuts accept key combos joined with + (ctrl+shift+space) or a mouse button '
      '(mouse_back, mouse_forward, mouse_middle).',
      [('recording_options', k) for k in ('activation_key', 'activation_key_no_enter', 'recording_mode',
                                          'sound_device', 'silence_duration', 'min_speech_duration',
-                                         'vad_aggressiveness', 'min_duration',
-                                         'sample_rate', 'input_backend')]),
+                                         'vad_aggressiveness', 'min_duration', 'sample_rate',
+                                         'input_backend')]),
     ('output', 'Output & typing', 'type', 'How the text lands in the focused window.',
      [('post_processing', k) for k in ('input_method', 'press_enter', 'restore_clipboard',
                                        'add_trailing_space', 'remove_trailing_period',
@@ -76,19 +80,18 @@ SECTIONS = [
                               'print_to_terminal')]),
     ('correction', 'Correction & vocabulary', 'sparkle',
      'Fix names and jargon before they reach the screen.',
-     [(E, 'common', 'vocabulary'), ('post_processing', 'filter_hallucinations'),
-      ('post_processing', 'word_replacements'),
-      (E, 'common', 'initial_prompt'),
-      ('#llm', 'Local LLM correction (llama.cpp + Vulkan)')]
-     + [('post_processing', 'llm_correction', k) for k in (
-         'enabled', 'binary_path', 'model_path', 'lib_path', 'auto_start', 'n_gpu_layers',
-         'context_size', 'temperature', 'timeout_s', 'host', 'port', 'n_threads', 'system_prompt')]),
+     [(MODEL, 'common', 'vocabulary'), ('post_processing', 'filter_hallucinations'),
+      ('post_processing', 'word_replacements'), (MODEL, 'common', 'initial_prompt'),
+      ('#llm', 'Local LLM correction and summaries (llama.cpp + Vulkan)')]
+     + [LLM + (k,) for k in LLM_SERVER_KEYS + LLM_TUNING_KEYS]),
     ('claude', 'Claude Code', 'terminal',
      'Dictate prompts straight into Claude Code and let it read your past sessions.',
      [('claude_code', k) for k in ('smart_terminal_mode', 'suppress_enter', 'backtick_filenames')]),
     ('sessions', 'Sessions & storage', 'db',
      'Every dictation is stored locally in SQLite. Nothing leaves your machine.',
      [('sessions', k) for k in ('enabled', 'new_session_after_minutes', 'db_path')]),
+    ('appearance', 'Appearance', 'palette', 'Theme and accent colour. Applied as soon as you save.',
+     [('appearance', 'theme'), ('appearance', 'accent')]),
 ]
 
 
@@ -97,6 +100,37 @@ def schema_meta(keys):
     for k in keys:
         node = node[k]
     return node
+
+
+class ChoiceButtons(QWidget):
+    """Segmented buttons for a small set of options (theme), or colour swatches (accent)."""
+
+    changed = Signal()
+
+    def __init__(self, options, swatches=None):
+        super().__init__()
+        lay = hbox(spacing=8, parent=self)
+        self.group = QButtonGroup(self)
+        self.group.setExclusive(True)
+        self.buttons = {}
+        for option in options:
+            b = QPushButton(option.capitalize())
+            b.setProperty('role', 'swatch')
+            b.setCheckable(True)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            if swatches:
+                b.setIcon(theme.icon('stop', swatches[option]))
+            b.clicked.connect(self.changed)
+            self.group.addButton(b)
+            self.buttons[option] = b
+            lay.addWidget(b)
+
+    def value(self):
+        return next((o for o, b in self.buttons.items() if b.isChecked()), None)
+
+    def set_value(self, value):
+        if value in self.buttons:
+            self.buttons[value].setChecked(True)
 
 
 class SettingsPage(QWidget):
@@ -108,29 +142,23 @@ class SettingsPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.fields = {}          # keys tuple -> (widget, meta)
-        self.rows = {}            # keys tuple -> row widget
         self.group_rows = {'whispercpp': [], 'local': []}
         self.section_widgets = {}
         self.nav_buttons = {}
+        self.engine_buttons = {}
+        self.engine = EngineKind.FASTER_WHISPER
         self.dirty = False
         self._loading = False
 
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
+        lay = hbox(parent=self)
         lay.addWidget(self._build_nav())
-
-        right = QVBoxLayout()
-        right.setContentsMargins(0, 0, 0, 0)
-        right.setSpacing(0)
+        right = vbox()
         self.scroll = QScrollArea()
         self.scroll.setObjectName('SettingsBody')
         self.scroll.setWidgetResizable(True)
         body = QWidget()
         body.setObjectName('SettingsBody')
-        self.body_lay = QVBoxLayout(body)
-        self.body_lay.setContentsMargins(36, 28, 36, 48)
-        self.body_lay.setSpacing(20)
+        self.body_lay = vbox((36, 28, 36, 48), 20, body)
         for section in SECTIONS:
             self._build_section(*section)
         self.body_lay.addStretch(1)
@@ -139,7 +167,6 @@ class SettingsPage(QWidget):
         right.addWidget(self.scroll, 1)
         right.addWidget(self._build_save_bar())
         lay.addLayout(right, 1)
-
         self.load_from_config()
 
     # ------------------------------------------------------------------ layout
@@ -148,9 +175,7 @@ class SettingsPage(QWidget):
         nav.setObjectName('SettingsNav')
         nav.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         nav.setFixedWidth(236)
-        lay = QVBoxLayout(nav)
-        lay.setContentsMargins(12, 16, 12, 16)
-        lay.setSpacing(2)
+        lay = vbox((12, 16, 12, 16), 2, nav)
         back = theme.button('Back to sessions', 'nav', 'back')
         back.clicked.connect(self.request_close)
         lay.addWidget(back)
@@ -158,7 +183,6 @@ class SettingsPage(QWidget):
         group = QButtonGroup(self)
         for key, title, icon_name, _, _ in SECTIONS:
             b = theme.button(title.replace('&', '&&'), 'nav', icon_name)
-            b.setIcon(theme.icon(icon_name, theme.MUTED))
             b.setCheckable(True)
             b.clicked.connect(lambda _=False, k=key: self.scroll_to(k))
             group.addButton(b)
@@ -171,9 +195,8 @@ class SettingsPage(QWidget):
         bar = QWidget()
         bar.setObjectName('SaveBar')
         bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        lay = QHBoxLayout(bar)
-        lay.setContentsMargins(36, 10, 24, 10)
-        self.save_hint = theme.label('Changes apply immediately — no restart.', 'faint')
+        lay = hbox((36, 10, 24, 10), 8, bar)
+        self.save_hint = theme.label('', 'faint')
         lay.addWidget(self.save_hint, 1)
         self.discard_btn = theme.button('Discard')
         self.discard_btn.clicked.connect(self.load_from_config)
@@ -186,18 +209,13 @@ class SettingsPage(QWidget):
     def _build_section(self, key, title, _icon, intro, fields):
         wrap = QWidget()
         wrap.setMaximumWidth(860)
-        lay = QVBoxLayout(wrap)
-        lay.setContentsMargins(0, 8, 0, 0)
-        lay.setSpacing(12)
+        lay = vbox((0, 8, 0, 0), 12, wrap)
         lay.addWidget(theme.label(title, 'h1'))
         lay.addWidget(theme.label(intro, 'muted', wrap=True))
 
         card = QFrame()
         card.setObjectName('Card')
-        cl = QVBoxLayout(card)
-        cl.setContentsMargins(20, 18, 20, 18)
-        cl.setSpacing(16)
-
+        cl = vbox((20, 18, 20, 18), 16, card)
         if key == 'engine':
             cl.addWidget(self._build_engine_picker())
             cl.addWidget(self._build_engine_info())
@@ -211,20 +229,18 @@ class SettingsPage(QWidget):
                 sub = theme.label(spec[1], 'h2')
                 sub.setContentsMargins(0, 8, 0, 0)
                 cl.addWidget(sub)
-                if group in self.group_rows:
-                    self.group_rows[group].append(sub)
+                self.group_rows.get(group, []).append(sub)
                 continue
             row = self._build_field(spec)
             if row is None:
                 continue
             cl.addWidget(row)
-            if group in self.group_rows:
-                self.group_rows[group].append(row)
+            self.group_rows.get(group, []).append(row)
 
         if key == 'sessions':
             open_btn = theme.button('Open data folder', None, 'folder')
             open_btn.clicked.connect(self._open_data_folder)
-            row = QHBoxLayout()
+            row = hbox()
             row.addWidget(open_btn)
             row.addStretch(1)
             cl.addLayout(row)
@@ -235,26 +251,19 @@ class SettingsPage(QWidget):
 
     def _build_engine_picker(self):
         w = QWidget()
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay = hbox(spacing=12, parent=w)
         self.engine_group = QButtonGroup(self)
-        self.engine_buttons = {}
-        for value, title, desc in [
-            ('whispercpp', 'whisper.cpp · Vulkan',
+        for kind, title, desc in [
+            (EngineKind.WHISPERCPP, 'whisper.cpp · Vulkan',
              'GPU on AMD, Intel and NVIDIA. Model stays loaded. Recommended for AMD.'),
-            ('faster-whisper', 'faster-whisper',
+            (EngineKind.FASTER_WHISPER, 'faster-whisper',
              'CPU (or CUDA on NVIDIA). Works out of the box, no extra build needed.'),
         ]:
             b = QPushButton()
             b.setProperty('role', 'engine')
-            bl = QVBoxLayout(b)
-            bl.setContentsMargins(14, 12, 14, 12)
-            bl.setSpacing(4)
-            t = QLabel(title)
-            t.setStyleSheet('font-weight: 600; font-size: 14px; background: transparent;')
+            bl = vbox((14, 12, 14, 12), 4, b)
+            t = theme.label(title, 'h2')
             d = theme.label(desc, 'faint', wrap=True)
-            d.setStyleSheet('background: transparent;')
             for lbl in (t, d):
                 lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
                 bl.addWidget(lbl)
@@ -262,46 +271,36 @@ class SettingsPage(QWidget):
             b.setCheckable(True)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setAccessibleName(title)
-            b.clicked.connect(lambda _=False, v=value: self._on_engine_picked(v))
+            b.clicked.connect(lambda _=False, k=kind: self._on_engine_picked(k))
             self.engine_group.addButton(b)
-            self.engine_buttons[value] = b
+            self.engine_buttons[kind] = b
             lay.addWidget(b, 1)
         return w
 
     def _build_engine_info(self):
         box = QFrame()
         box.setObjectName('InfoBox')
-        lay = QVBoxLayout(box)
-        lay.setContentsMargins(14, 12, 14, 12)
-        lay.setSpacing(6)
-        top = QHBoxLayout()
-        top.setSpacing(10)
+        lay = vbox((14, 12, 14, 12), 6, box)
+        top = hbox(spacing=10)
         self.engine_dot = theme.dot(theme.INFO)
         top.addWidget(self.engine_dot)
-        self.engine_info = QLabel('Engine starting…')
-        self.engine_info.setStyleSheet('font-weight: 500;')
+        self.engine_info = theme.label('Engine starting…', 'strong')
         top.addWidget(self.engine_info, 1)
         restart = theme.button('Restart engine')
         restart.setFixedHeight(30)
         restart.clicked.connect(self.restartEngineRequested)
         top.addWidget(restart)
         lay.addLayout(top)
-        self.engine_detail = theme.label('', 'mono', wrap=True)
-        self.engine_detail.setStyleSheet('color: #8EA9C6;')
+        self.engine_detail = theme.label('', 'info-mono', wrap=True)
         lay.addWidget(self.engine_detail)
         return box
 
     def _build_mcp_box(self):
         box = QFrame()
         box.setObjectName('InfoBox')
-        lay = QVBoxLayout(box)
-        lay.setContentsMargins(14, 12, 14, 12)
-        lay.setSpacing(10)
-        head = QHBoxLayout()
-        self.mcp_state = QLabel()
-        self.mcp_state.setStyleSheet('font-weight: 500;')
-        head.addWidget(self.mcp_state, 1)
-        lay.addLayout(head)
+        lay = vbox((14, 12, 14, 12), 10, box)
+        self.mcp_state = theme.label(role='strong')
+        lay.addWidget(self.mcp_state)
         lay.addWidget(theme.label(
             'The MCP server gives Claude Code read-only tools to search and read your dictation '
             'history, so it can recover context you dictated earlier.', 'faint', wrap=True))
@@ -309,13 +308,13 @@ class SettingsPage(QWidget):
         self.mcp_cmd.setReadOnly(True)
         self.mcp_cmd.setProperty('role', 'mono')
         lay.addWidget(self.mcp_cmd)
-        row = QHBoxLayout()
+        row = hbox(spacing=8)
         copy = theme.button('Copy command', None, 'copy')
         copy.clicked.connect(lambda: QGuiApplication.clipboard().setText(self.mcp_cmd.text()))
         row.addWidget(copy)
-        add = theme.button('Add to Claude Code', 'warm', 'terminal', icon_color='#FFD3BF')
-        add.clicked.connect(self.mcpSetupRequested)
-        row.addWidget(add)
+        self.mcp_add_btn = theme.button('Add to Claude Code', 'warm', 'terminal')
+        self.mcp_add_btn.clicked.connect(self._on_mcp_add)
+        row.addWidget(self.mcp_add_btn)
         row.addStretch(1)
         lay.addLayout(row)
         self.mcp_msg = theme.label('', 'faint', wrap=True)
@@ -329,40 +328,39 @@ class SettingsPage(QWidget):
         except KeyError:
             return None
         name = keys[-1]
-        row = QWidget()
         multiline = name in MULTILINE
-        lay = QVBoxLayout(row) if multiline else QHBoxLayout(row)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(8 if multiline else 16)
+        row = QWidget()
+        lay = vbox(spacing=8, parent=row) if multiline else hbox(spacing=16, parent=row)
 
-        text = QVBoxLayout()
-        text.setSpacing(3)
-        title = QLabel(LABELS.get(name, name.replace('_', ' ').capitalize()))
-        title.setStyleSheet('font-weight: 500; font-size: 14px;')
+        text = vbox(spacing=3)
+        title = theme.label(LABELS.get(name, name.replace('_', ' ').capitalize()), 'strong')
         text.addWidget(title)
         if meta.get('description'):
-            desc = theme.label(meta['description'], 'faint', wrap=True)
-            text.addWidget(desc)
+            text.addWidget(theme.label(meta['description'], 'faint', wrap=True))
         lay.addLayout(text, 1)
 
         widget, container = self._make_input(keys, meta)
         widget.setAccessibleName(title.text())
-        if multiline:
-            lay.addWidget(container)
-        else:
-            lay.addWidget(container, 0, Qt.AlignmentFlag.AlignVCenter)
+        lay.addWidget(container, 0, Qt.AlignmentFlag.AlignVCenter)
         self.fields[keys] = (widget, meta)
-        self.rows[keys] = row
         return row
 
     def _make_input(self, keys, meta):
         name, kind = keys[-1], meta.get('type')
+        if keys == ('appearance', 'accent'):
+            w = ChoiceButtons(meta['options'], swatches=theme.ACCENTS)
+            w.changed.connect(self._mark_dirty)
+            return w, w
+        if keys == ('appearance', 'theme'):
+            w = ChoiceButtons(meta['options'])
+            w.changed.connect(self._mark_dirty)
+            return w, w
         if name == 'sound_device':
             w = QComboBox()
             w.setFixedWidth(320)
             w.addItem('Default (system microphone)', None)
             try:
-                import sounddevice as sd
+                import sounddevice as sd   # imported here: enumerating devices is slow-ish
                 seen = set()
                 for dev in sd.query_devices():
                     if dev.get('max_input_channels', 0) > 0 and dev['name'] not in seen:
@@ -397,9 +395,7 @@ class SettingsPage(QWidget):
             w.setProperty('role', 'mono')
             box = QWidget()
             box.setFixedWidth(420)
-            bl = QHBoxLayout(box)
-            bl.setContentsMargins(0, 0, 0, 0)
-            bl.setSpacing(8)
+            bl = hbox(spacing=8, parent=box)
             bl.addWidget(w, 1)
             browse = theme.button('Browse')
             browse.clicked.connect(lambda: self._browse(w, name, keys))
@@ -415,7 +411,9 @@ class SettingsPage(QWidget):
         self._loading = True
         for keys, (w, meta) in self.fields.items():
             value = ConfigManager.get_config_value(*keys)
-            if isinstance(w, Toggle):
+            if isinstance(w, ChoiceButtons):
+                w.set_value(value or meta.get('value'))
+            elif isinstance(w, Toggle):
                 w.setChecked(bool(value))
             elif isinstance(w, QPlainTextEdit):
                 w.setPlainText('' if value is None else str(value))
@@ -429,14 +427,21 @@ class SettingsPage(QWidget):
                 w.setCurrentText('' if value is None else str(value))
             elif isinstance(w, QLineEdit):
                 w.setText('' if value is None else str(value))
-        engine = ConfigManager.get_config_value('model_options', 'engine') or 'faster-whisper'
+        try:
+            engine = EngineKind(ConfigManager.get_config_value(MODEL, 'engine'))
+        except ValueError:
+            engine = EngineKind.FASTER_WHISPER
         self._apply_engine(engine)
         self._loading = False
         self._set_dirty(False)
-        self.refresh_mcp()
+        self.mcp_cmd.setText(claude_integration.add_command_text(
+            ConfigManager.get_config_value('sessions', 'db_path')))
 
-    def _value(self, w, meta, keys):
+    @staticmethod
+    def _value(w, meta, keys):
         kind = meta.get('type')
+        if isinstance(w, ChoiceButtons):
+            return w.value()
         if isinstance(w, Toggle):
             return w.isChecked()
         if isinstance(w, QPlainTextEdit):
@@ -457,7 +462,7 @@ class SettingsPage(QWidget):
         old = ConfigManager.snapshot()
         for keys, (w, meta) in self.fields.items():
             ConfigManager.set_config_value(self._value(w, meta, keys), *keys)
-        ConfigManager.set_config_value(self._engine, 'model_options', 'engine')
+        ConfigManager.set_config_value(self.engine.value, MODEL, 'engine')
         try:
             ConfigManager.save_config()
         except OSError as e:
@@ -472,29 +477,34 @@ class SettingsPage(QWidget):
         self._mark_dirty()
 
     def _apply_engine(self, engine):
-        self._engine = engine
-        for value, b in self.engine_buttons.items():
-            b.setChecked(value == engine)
+        self.engine = engine
+        for kind, b in self.engine_buttons.items():
+            b.setChecked(kind is engine)
         for group, widgets in self.group_rows.items():
-            visible = (group == 'whispercpp') == (engine == 'whispercpp')
+            visible = (group == 'whispercpp') == (engine is EngineKind.WHISPERCPP)
             for w in widgets:
                 w.setVisible(visible)
 
-    def set_engine_info(self, state, title, detail=''):
-        color = {'ready': theme.INFO, 'starting': '#F2C66B', 'error': theme.DANGER}.get(state, theme.FAINT)
-        self.engine_dot.setStyleSheet(f'background: {color}; border-radius: 4px;')
-        self.engine_info.setText(title)
-        self.engine_detail.setText(detail)
-        self.engine_detail.setVisible(bool(detail))
+    def set_engine_info(self, status):
+        """Show an EngineStatus: title plus the real server/GPU details."""
+        color = {EngineState.READY: theme.INFO, EngineState.STARTING: theme.WARN_TEXT,
+                 EngineState.ERROR: theme.DANGER}.get(status.state, theme.FAINT)
+        theme.set_dot_color(self.engine_dot, color)
+        self.engine_info.setText(status.title)
+        self.engine_detail.setText(status.detail)
+        self.engine_detail.setVisible(bool(status.detail))
 
     # ------------------------------------------------------------------ claude
-    def refresh_mcp(self, message=None):
-        db = ConfigManager.get_config_value('sessions', 'db_path')
-        self.mcp_cmd.setText(claude_integration.add_command_text(db))
-        registered = claude_integration.is_registered()
+    def _on_mcp_add(self):
+        self.mcp_add_btn.setEnabled(False)
+        self.mcp_msg.setText('Registering with Claude Code…')
+        self.mcp_msg.show()
+        self.mcpSetupRequested.emit()
+
+    def refresh_mcp(self, registered, message=None):
+        self.mcp_add_btn.setEnabled(True)
         self.mcp_state.setText('● Registered in Claude Code' if registered else
                                '○ Not registered in Claude Code yet')
-        self.mcp_state.setStyleSheet(f'font-weight: 500; color: {theme.INFO_TEXT if registered else theme.MUTED};')
         if message:
             self.mcp_msg.setText(message)
             self.mcp_msg.show()
@@ -507,13 +517,14 @@ class SettingsPage(QWidget):
         elif name == 'db_path':
             path, _ = QFileDialog.getSaveFileName(self, 'Session database', start, 'SQLite (*.db)')
         else:
-            filters = {'binary_path': 'Executables (*.exe);;All files (*)'}
-            if 'llm_correction' in keys and name == 'model_path':
+            if name == 'binary_path':
+                flt = 'Executables (*.exe);;All files (*)'
+            elif 'llm_correction' in keys:
                 flt = 'GGUF models (*.gguf);;All files (*)'
             elif 'whispercpp' in keys:
                 flt = 'ggml models (*.bin);;All files (*)'
             else:
-                flt = filters.get(name, 'All files (*)')
+                flt = 'All files (*)'
             path, _ = QFileDialog.getOpenFileName(self, 'Select file', start, flt)
         if path:
             line_edit.setText(os.path.normpath(path))

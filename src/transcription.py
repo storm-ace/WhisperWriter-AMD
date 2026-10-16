@@ -1,5 +1,9 @@
 import io
+import os
 import re
+from dataclasses import dataclass
+from enum import Enum
+
 import numpy as np
 import requests
 import soundfile as sf
@@ -7,25 +11,55 @@ import soundfile as sf
 from utils import ConfigManager
 
 
+class EngineKind(str, Enum):
+    """Transcription engine, as stored in config (model_options.engine)."""
+    WHISPERCPP = 'whispercpp'          # GPU via a local whisper.cpp server (Vulkan)
+    FASTER_WHISPER = 'faster-whisper'  # in-process, CPU (or CUDA on NVIDIA)
+
+    @property
+    def label(self):
+        return 'whisper.cpp' if self is EngineKind.WHISPERCPP else 'faster-whisper'
+
+
+@dataclass
+class TranscriptionResult:
+    """One transcribed speech segment."""
+    text: str = ''           # post-processed text, ready to type
+    raw: str = ''            # engine output before clean-up
+    corrected: bool = False  # the LLM changed the text
+    duration_s: float = 0.0
+    latency_s: float = 0.0
+    error: str = None
+
+
+def parse_vocabulary(text):
+    """Project vocabulary string (comma or newline separated) -> list of terms."""
+    return [w.strip() for w in (text or '').replace('\n', ',').split(',') if w.strip()]
+
+
+def model_label(path_or_name):
+    """'C:\\models\\ggml-large-v3-turbo.bin' -> 'large-v3-turbo'; plain names pass through."""
+    name = os.path.basename(path_or_name or '')
+    return re.sub(r'\.bin$', '', re.sub(r'^ggml-', '', name))
+
+
 def build_initial_prompt(common):
     """Initial prompt plus the project vocabulary, so names and file names land right."""
     parts = []
     if common.get('initial_prompt'):
         parts.append(common['initial_prompt'].strip())
-    vocab = [w.strip() for w in (common.get('vocabulary') or '').replace('\n', ',').split(',')]
-    vocab = [w for w in vocab if w]
+    vocab = parse_vocabulary(common.get('vocabulary'))
     if vocab:
         parts.append(', '.join(vocab) + '.')
     return ' '.join(parts) or None
 
 
 def resolve_engine():
-    """Return the active transcription engine.
-
-    'whispercpp' = GPU via a local whisper.cpp server over HTTP (Vulkan).
-    'faster-whisper' = in-process, CPU.
-    """
-    return ConfigManager.get_config_value('model_options', 'engine') or 'faster-whisper'
+    """The configured EngineKind."""
+    try:
+        return EngineKind(ConfigManager.get_config_value('model_options', 'engine'))
+    except ValueError:
+        return EngineKind.FASTER_WHISPER
 
 def create_local_model():
     """
@@ -140,6 +174,41 @@ DEFAULT_LLM_SYSTEM_PROMPT = (
 )
 
 
+def _llm_chat(opts, system, user, max_tokens, timeout):
+    """One chat completion against the local llama.cpp server. Raises on failure."""
+    host = opts.get('host') or '127.0.0.1'
+    port = int(opts.get('port') or 8081)
+    body = {
+        'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': user}],
+        'temperature': float(opts.get('temperature') or 0.0),
+        'max_tokens': max_tokens,
+        'cache_prompt': True,
+    }
+    resp = requests.post(f'http://{host}:{port}/v1/chat/completions', json=body, timeout=timeout)
+    resp.raise_for_status()
+    return (resp.json()['choices'][0]['message']['content'] or '').strip()
+
+
+SUMMARY_SYSTEM_PROMPT = (
+    'You summarise a voice dictation session for later reference. Write 3 to 8 short bullet '
+    'points with the decisions, tasks and open questions, in the same language as the '
+    'dictations. Use "- " bullets. No introduction, no closing remarks.'
+)
+
+
+def summarize_with_llm(transcript):
+    """Summarise a session transcript with the local LLM. Raises with a readable message."""
+    opts = ConfigManager.get_config_section('post_processing').get('llm_correction') or {}
+    try:
+        summary = _llm_chat(opts, SUMMARY_SYSTEM_PROMPT, transcript, max_tokens=400, timeout=90)
+    except requests.ConnectionError:
+        raise RuntimeError('No local LLM server is running. Set up llama.cpp under '
+                           'Settings > Correction & vocabulary and enable LLM correction.')
+    if not summary:
+        raise RuntimeError('The LLM returned an empty summary.')
+    return summary
+
+
 def correct_with_llm(text, opts):
     """
     Clean up a transcription via a local llama.cpp server (GPU). Fail-open: on any
@@ -147,22 +216,9 @@ def correct_with_llm(text, opts):
     with the LLM never blocks dictation.
     """
     try:
-        host = opts.get('host') or '127.0.0.1'
-        port = int(opts.get('port') or 8081)
-        system = opts.get('system_prompt') or DEFAULT_LLM_SYSTEM_PROMPT
-        body = {
-            'messages': [
-                {'role': 'system', 'content': system},
-                {'role': 'user', 'content': text},
-            ],
-            'temperature': float(opts.get('temperature') or 0.0),
-            'max_tokens': len(text.split()) * 3 + 24,
-            'cache_prompt': True,
-        }
-        resp = requests.post(f'http://{host}:{port}/v1/chat/completions',
-                             json=body, timeout=float(opts.get('timeout_s') or 8))
-        resp.raise_for_status()
-        out = (resp.json()['choices'][0]['message']['content'] or '').strip()
+        out = _llm_chat(opts, opts.get('system_prompt') or DEFAULT_LLM_SYSTEM_PROMPT, text,
+                        max_tokens=len(text.split()) * 3 + 24,
+                        timeout=float(opts.get('timeout_s') or 8))
         return out or text
     except Exception as e:
         ConfigManager.console_print(f'LLM correction skipped ({e}); using raw text.')
@@ -223,7 +279,9 @@ def post_process_transcription(transcription, info=None):
     Apply post-processing to the transcription. When `info` is a dict, it receives
     'corrected' = True if the LLM changed the text.
     """
-    transcription = transcription.strip()
+    # whisper.cpp returns one line per segment; a newline typed into a chat or terminal
+    # would press Enter, so dictation is always one line of text.
+    transcription = ' '.join(transcription.split())
     post_processing = ConfigManager.get_config_section('post_processing')
     if post_processing.get('filter_hallucinations', True):
         transcription = remove_hallucinations(transcription)
@@ -248,23 +306,15 @@ def post_process_transcription(transcription, info=None):
     return transcription
 
 def transcribe_detailed(audio_data, local_model=None):
-    """
-    Transcribe audio with the configured engine and return a dict:
-    text (post-processed), raw (engine output), corrected (LLM changed it).
-    """
+    """Transcribe audio with the configured engine and post-process it."""
     if audio_data is None:
-        return {'text': '', 'raw': '', 'corrected': False}
+        return TranscriptionResult()
 
-    if resolve_engine() == 'whispercpp':
+    if resolve_engine() is EngineKind.WHISPERCPP:
         raw = transcribe_whispercpp(audio_data)
-    else:  # 'faster-whisper'
+    else:
         raw = transcribe_local(audio_data, local_model)
 
     info = {'corrected': False}
     text = post_process_transcription(raw, info)
-    return {'text': text, 'raw': raw.strip(), 'corrected': info['corrected']}
-
-def transcribe(audio_data, local_model=None):
-    """Transcribe audio and return only the post-processed text."""
-    return transcribe_detailed(audio_data, local_model)['text']
-
+    return TranscriptionResult(text=text, raw=raw.strip(), corrected=info['corrected'])

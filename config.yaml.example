@@ -74,3 +74,6 @@ claude_code:
   smart_terminal_mode: true
   suppress_enter: true            # never auto-submit a prompt in Claude Code
   backtick_filenames: true        # auth_guard.py -> `auth_guard.py`
+appearance:
+  theme: dark                     # dark | light | system
+  accent: orange                  # orange | amber | blue | violet

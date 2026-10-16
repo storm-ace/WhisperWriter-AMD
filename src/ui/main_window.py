@@ -2,22 +2,28 @@
 Main window: session history on the left, the selected session's dictations in the
 middle with the record dock, and Claude Code / engine context on the right. Settings
 open as a page in the same window.
+
+The window only shows state and reports user intent through signals; the app object
+(main.py) owns recording, engines and config changes.
 """
 
 import os
 import time
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QGuiApplication, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QLabel,
-                               QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
-                               QMessageBox, QScrollArea, QSizePolicy, QStackedWidget,
-                               QVBoxLayout, QWidget)
+from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
+from PySide6.QtWidgets import (QButtonGroup, QFileDialog, QFrame, QLabel, QLineEdit, QListWidget,
+                               QListWidgetItem, QMainWindow, QMenu, QMessageBox, QScrollArea,
+                               QSizePolicy, QStackedWidget, QWidget)
 
+from result_thread import Status
 from ui import theme
+from ui.context_panel import ContextPanel
+from ui.formatting import day_group, fmt_duration, fmt_when, hotkey_parts, plural
 from ui.palette import CommandPalette
+from ui.session_widgets import EntryWidget, SessionItem, SummaryBox
 from ui.settings_page import SettingsPage
-from ui.widgets import ChipRow, Toast, Toggle, Waveform
+from ui.widgets import Toast, Waveform, hbox, vbox
 from utils import ConfigManager
 
 RECORDING_MODES = [
@@ -28,141 +34,28 @@ RECORDING_MODES = [
 ]
 
 
-def fmt_when(ts):
-    t = time.localtime(ts)
-    now = time.localtime()
-    if t.tm_year == now.tm_year and t.tm_yday == now.tm_yday:
-        return time.strftime('%H:%M', t)
-    if t.tm_year == now.tm_year and now.tm_yday - t.tm_yday == 1:
-        return 'Yesterday'
-    return time.strftime('%b %d', t)
-
-
-def day_group(ts):
-    t = time.localtime(ts)
-    now = time.localtime()
-    if t.tm_year == now.tm_year and t.tm_yday == now.tm_yday:
-        return 'TODAY'
-    if t.tm_year == now.tm_year and now.tm_yday - t.tm_yday == 1:
-        return 'YESTERDAY'
-    if time.time() - ts < 7 * 86400:
-        return 'THIS WEEK'
-    return 'EARLIER'
-
-
-def fmt_duration(seconds):
-    seconds = int(seconds or 0)
-    if seconds >= 3600:
-        return f'{seconds // 3600}h {seconds % 3600 // 60}m'
-    if seconds >= 60:
-        return f'{seconds // 60} min'
-    return f'{seconds} s'
-
-
-def plural(n, word):
-    return f'{n:,} {word}{"" if n == 1 else "s"}'
-
-
-def hotkey_parts(combo):
-    return [p.strip().capitalize() for p in (combo or '').split('+') if p.strip()]
-
-
-def vbox(margins=(0, 0, 0, 0), spacing=0, parent=None):
-    lay = QVBoxLayout(parent) if parent is not None else QVBoxLayout()
-    lay.setContentsMargins(*margins)
-    lay.setSpacing(spacing)
-    return lay
-
-
-def hbox(margins=(0, 0, 0, 0), spacing=0, parent=None):
-    lay = QHBoxLayout(parent) if parent is not None else QHBoxLayout()
-    lay.setContentsMargins(*margins)
-    lay.setSpacing(spacing)
-    return lay
-
-
-class SessionItem(QWidget):
-    def __init__(self, title, meta, active=False, snippet=None):
-        super().__init__()
-        lay = vbox((12, 9, 12, 9), 3, self)
-        top = hbox(spacing=8)
-        if active:
-            top.addWidget(theme.dot(theme.ACCENT, 6))
-        t = QLabel()
-        t.setStyleSheet('font-weight: 500;')
-        t.setTextFormat(Qt.TextFormat.PlainText)
-        t.setText(t.fontMetrics().elidedText(title, Qt.TextElideMode.ElideRight, 200 if active else 212))
-        t.setToolTip(title)
-        top.addWidget(t, 1)
-        lay.addLayout(top)
-        if snippet:
-            s = theme.label(snippet, 'faint', wrap=True)
-            lay.addWidget(s)
-        m = theme.label('', 'faint')
-        m.setText(m.fontMetrics().elidedText(meta, Qt.TextElideMode.ElideRight, 212))
-        lay.addWidget(m)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-
-class EntryWidget(QFrame):
-    copyRequested = Signal(str)
-    deleteRequested = Signal(int)
-
-    def __init__(self, d):
-        super().__init__()
-        self.setObjectName('Entry')
-        self.dictation_id = d['id']
-        lay = hbox((0, 16, 0, 16), 16, self)
-
-        stamp = time.strftime('%H:%M', time.localtime(d['created_at']))
-        dur = d.get('duration_s')
-        left = theme.label(f"{stamp}\n{int(dur) // 60}:{int(dur) % 60:02d}" if dur else stamp,
-                           'mono')
-        left.setFixedWidth(56)
-        left.setAlignment(Qt.AlignmentFlag.AlignTop)
-        lay.addWidget(left)
-
-        right = vbox(spacing=8)
-        head = hbox(spacing=6)
-        chips = []
-        if d.get('target_app'):
-            chips.append(('chip', f"→ {d['target_app']}"))
-        if d.get('latency_s'):
-            chips.append(('chip', f"{d['latency_s']:.1f} s"))
-        if d.get('corrected'):
-            chips.append(('chip-info', 'LLM corrected'))
-        for role, text in chips:
-            head.addWidget(theme.label(text, role))
-        head.addStretch(1)
-        copy_btn = theme.tool_button('copy', 'Copy text', theme.FAINT, 14)
-        copy_btn.clicked.connect(lambda: self.copyRequested.emit(d['text']))
-        head.addWidget(copy_btn)
-        del_btn = theme.tool_button('trash', 'Delete dictation', theme.FAINT, 14)
-        del_btn.clicked.connect(lambda: self.deleteRequested.emit(self.dictation_id))
-        head.addWidget(del_btn)
-        right.addLayout(head)
-
-        text = theme.label(d['text'], 'body', wrap=True, selectable=True)
-        text.setTextFormat(Qt.TextFormat.PlainText)
-        right.addWidget(text)
-        lay.addLayout(right, 1)
-
-
 class MainWindow(QMainWindow):
     recordClicked = Signal()
     newSessionRequested = Signal()
     continueSessionRequested = Signal(int)
-    settingsApplied = Signal(dict)   # previous config snapshot
+    sendToClaudeRequested = Signal(int)
+    summarizeRequested = Signal(int)
+    settingChangeRequested = Signal(tuple, object)   # config keys, value (save + apply)
+    settingsSaved = Signal(dict)                     # previous config snapshot
     mcpSetupRequested = Signal()
+    restartEngineRequested = Signal()
 
-    def __init__(self, store, mcp_status_fn=None):
+    def __init__(self, store):
         super().__init__()
         self.store = store
-        self.mcp_status_fn = mcp_status_fn or (lambda: False)
         self.active_session_id = None
         self.viewed_session_id = None
-        self.engine_state = ('starting', 'Starting engine…')
-        self._entry_count = 0
+        self.engine_status = None
+        self.last_target = ''
+        self.full_title = ''
+        self.entry_count = 0
+        self.summarizing = set()
+        self.palette = None
 
         self.setWindowTitle('WhisperWriter')
         self.setWindowIcon(theme.app_icon())
@@ -180,12 +73,12 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self._build_sessions_page())
         self.settings_page = SettingsPage(self)
         self.settings_page.closed.connect(self.show_sessions)
-        self.settings_page.saved.connect(self._on_settings_saved)
+        self.settings_page.saved.connect(self.settingsSaved)
         self.settings_page.mcpSetupRequested.connect(self.mcpSetupRequested)
+        self.settings_page.restartEngineRequested.connect(self.restartEngineRequested)
         self.pages.addWidget(self.settings_page)
 
         self.toast = Toast(root)
-        self.palette = None
 
         QShortcut(QKeySequence('Ctrl+K'), self, activated=self.open_palette)
         QShortcut(QKeySequence('Ctrl+N'), self, activated=self.newSessionRequested)
@@ -237,7 +130,10 @@ class MainWindow(QMainWindow):
         lay = hbox(parent=page)
         lay.addWidget(self._build_sidebar())
         lay.addWidget(self._build_center(), 1)
-        self.context_panel = self._build_context_panel()
+        self.context_panel = ContextPanel()
+        self.context_panel.settingToggled.connect(
+            lambda keys, value: self.settingChangeRequested.emit(keys, value))
+        self.context_panel.openSettingsRequested.connect(self.show_settings)
         lay.addWidget(self.context_panel)
         return page
 
@@ -270,7 +166,8 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.session_list, 1)
 
         foot = QWidget()
-        foot.setStyleSheet(f'background: {theme.SURFACE}; border-radius: 8px;')
+        foot.setObjectName('StorageFoot')
+        foot.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         flay = hbox((10, 8, 10, 8), 8, foot)
         db_icon = QLabel()
         db_icon.setPixmap(theme.icon('db', theme.MUTED).pixmap(14, 14))
@@ -285,10 +182,30 @@ class MainWindow(QMainWindow):
         center.setObjectName('Center')
         center.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         lay = vbox(parent=center)
+        lay.addWidget(self._build_header())
 
-        # header
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        holder = QWidget()
+        self.timeline = vbox((32, 4, 32, 16), 0, holder)
+        self.summary_box = SummaryBox()
+        self.summary_box.setContentsMargins(0, 0, 0, 12)
+        self.timeline.addWidget(self.summary_box)
+        self.empty_label = theme.label('', 'muted', wrap=True)
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_label.setContentsMargins(0, 80, 0, 0)
+        self.timeline.addWidget(self.empty_label)
+        self.timeline.addStretch(1)
+        self.scroll.setWidget(holder)
+        lay.addWidget(self.scroll, 1)
+
+        lay.addWidget(self._build_dock())
+        return center
+
+    def _build_header(self):
         header = QWidget()
-        hl = hbox((32, 24, 32, 8), 16, header)
+        hl = hbox((32, 24, 32, 8), 12, header)
         titles = vbox(spacing=4)
         self.title_stack = QStackedWidget()
         self.title_label = theme.label('', 'h1')
@@ -307,42 +224,27 @@ class MainWindow(QMainWindow):
         titles.addWidget(self.meta_label)
         hl.addLayout(titles, 1)
 
+        top = Qt.AlignmentFlag.AlignTop
         self.continue_btn = theme.button('Continue here', None, 'play',
                                          'Make this the session new dictations go to')
         self.continue_btn.clicked.connect(
             lambda: self.viewed_session_id and self.continueSessionRequested.emit(self.viewed_session_id))
-        hl.addWidget(self.continue_btn, 0, Qt.AlignmentFlag.AlignTop)
-        copy_btn = theme.button('Copy as Markdown', None, 'copy')
-        copy_btn.clicked.connect(lambda: self.copy_session(for_claude=False))
-        hl.addWidget(copy_btn, 0, Qt.AlignmentFlag.AlignTop)
-        claude_btn = theme.button('Copy for Claude Code', 'warm', 'terminal',
-                                  'Copy this session as a context block to paste into Claude Code',
-                                  icon_color='#FFD3BF')
-        claude_btn.clicked.connect(lambda: self.copy_session(for_claude=True))
-        hl.addWidget(claude_btn, 0, Qt.AlignmentFlag.AlignTop)
+        hl.addWidget(self.continue_btn, 0, top)
+        copy_btn = theme.button('Copy as context', None, 'copy',
+                                'Copy this session as a context block for a prompt')
+        copy_btn.clicked.connect(lambda: self.copy_session(for_claude=True))
+        hl.addWidget(copy_btn, 0, top)
+        send_btn = theme.button('Send to Claude Code', 'warm', 'send',
+                                'Paste this session into the Claude Code window as context')
+        send_btn.clicked.connect(lambda: self.viewed_session_id and
+                                 self.sendToClaudeRequested.emit(self.viewed_session_id))
+        hl.addWidget(send_btn, 0, top)
         more = theme.button('', None, 'more', 'More actions')
         more.setFixedWidth(40)
         more.clicked.connect(lambda: self._session_menu(self.viewed_session_id).exec(
             more.mapToGlobal(more.rect().bottomLeft())))
-        hl.addWidget(more, 0, Qt.AlignmentFlag.AlignTop)
-        lay.addWidget(header)
-
-        # timeline
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        holder = QWidget()
-        self.timeline = vbox((32, 4, 32, 16), 0, holder)
-        self.empty_label = theme.label('', 'muted', wrap=True)
-        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label.setContentsMargins(0, 80, 0, 0)
-        self.timeline.addWidget(self.empty_label)
-        self.timeline.addStretch(1)
-        self.scroll.setWidget(holder)
-        lay.addWidget(self.scroll, 1)
-
-        lay.addWidget(self._build_dock())
-        return center
+        hl.addWidget(more, 0, top)
+        return header
 
     def _build_dock(self):
         wrap = QWidget()
@@ -376,104 +278,16 @@ class MainWindow(QMainWindow):
             b.setProperty('mode_key', key)
             self.mode_group.addButton(b)
             gl.addWidget(b)
-        self.mode_group.buttonClicked.connect(self._on_mode_clicked)
+        self.mode_group.buttonClicked.connect(
+            lambda b: self.settingChangeRequested.emit(('recording_options', 'recording_mode'),
+                                                       b.property('mode_key')))
         lay.addWidget(group)
         return wrap
 
-    def _build_context_panel(self):
-        panel = QWidget()
-        panel.setObjectName('ContextPanel')
-        panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        panel.setFixedWidth(312)
-        outer = vbox(parent=panel)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        inner = QWidget()
-        lay = vbox((18, 20, 18, 20), 20, inner)
-        scroll.setWidget(inner)
-        outer.addWidget(scroll)
+    # ================================================================ sessions list
+    def set_store(self, store):
+        self.store = store
 
-        # Claude Code link
-        sec = vbox(spacing=10)
-        sec.addWidget(theme.label('CLAUDE CODE LINK', 'section'))
-        card = QFrame()
-        card.setObjectName('Card')
-        cl = vbox((12, 12, 12, 12), 8, card)
-        head = hbox(spacing=8)
-        self.mcp_dot = theme.dot(theme.INFO)
-        head.addWidget(self.mcp_dot)
-        self.mcp_title = QLabel()
-        self.mcp_title.setStyleSheet('font-weight: 500;')
-        head.addWidget(self.mcp_title, 1)
-        cl.addLayout(head)
-        self.mcp_desc = theme.label('', 'faint', wrap=True)
-        cl.addWidget(self.mcp_desc)
-        cl.addWidget(ChipRow(['search_dictations', 'get_session', 'list_sessions',
-                              'recent_dictations']))
-        self.mcp_btn = theme.button('Set up', None, 'terminal')
-        self.mcp_btn.clicked.connect(lambda: self.show_settings('claude'))
-        cl.addWidget(self.mcp_btn)
-        sec.addWidget(card)
-        lay.addLayout(sec)
-
-        # Smart dictation toggles (saved immediately)
-        sec = vbox(spacing=12)
-        sec.addWidget(theme.label('SMART DICTATION', 'section'))
-        self.quick_toggles = {}
-        for keys, text in [
-            (('claude_code', 'smart_terminal_mode'), 'Claude Code aware typing'),
-            (('claude_code', 'backtick_filenames'), 'Wrap file names in backticks'),
-            (('claude_code', 'suppress_enter'), 'Never press Enter in Claude Code'),
-            (('post_processing', 'llm_correction', 'enabled'), 'LLM correction (local)'),
-        ]:
-            row = hbox(spacing=12)
-            lbl = QLabel(text)
-            lbl.setWordWrap(True)
-            row.addWidget(lbl, 1)
-            t = Toggle()
-            t.setAccessibleName(text)
-            t.toggled.connect(lambda checked, k=keys: self._quick_toggle(k, checked))
-            row.addWidget(t)
-            self.quick_toggles[keys] = t
-            sec.addLayout(row)
-        lay.addLayout(sec)
-
-        # Vocabulary
-        sec = vbox(spacing=10)
-        head = hbox()
-        head.addWidget(theme.label('PROJECT VOCABULARY', 'section'), 1)
-        edit = theme.button('Edit', 'ghost')
-        edit.setFixedHeight(26)
-        edit.clicked.connect(lambda: self.show_settings('correction'))
-        head.addWidget(edit)
-        sec.addLayout(head)
-        self.vocab_chips = ChipRow()
-        sec.addWidget(self.vocab_chips)
-        self.vocab_hint = theme.label('Fed to Whisper as a prompt so names land right the '
-                                      'first time.', 'faint', wrap=True)
-        sec.addWidget(self.vocab_hint)
-        lay.addLayout(sec)
-
-        # Engine stats
-        card = QFrame()
-        card.setObjectName('Card')
-        el = vbox((12, 12, 12, 12), 8, card)
-        el.addWidget(theme.label('ENGINE', 'section'))
-        self.stat_rows = {}
-        for key in ('Engine', 'Model', 'Avg latency', 'Avg speed'):
-            row = hbox()
-            row.addWidget(QLabel(key), 1)
-            value = theme.label('—', 'mono')
-            value.setStyleSheet(f'color: {theme.TEXT};')
-            row.addWidget(value)
-            self.stat_rows[key] = value
-            el.addLayout(row)
-        lay.addWidget(card)
-        lay.addStretch(1)
-        return panel
-
-    # ================================================================ data views
     def refresh_sessions(self):
         query = self.search.text().strip()
         self.session_list.clear()
@@ -497,9 +311,8 @@ class MainWindow(QMainWindow):
                                      fmt_when(s['updated_at'])) if p]
                 self._add_session_item(s['id'], s['title'] or 'New session', ' · '.join(parts),
                                        active=s['id'] == self.active_session_id)
-        stats = self.store.stats()
-        n = stats['session_count']
-        self.storage_label.setText(f"{n} session{'s' if n != 1 else ''} · stored locally")
+        n = self.store.stats()['session_count']
+        self.storage_label.setText(f'{plural(n, "session")} · stored locally')
 
     def _add_group_header(self, text):
         item = QListWidgetItem()
@@ -526,6 +339,7 @@ class MainWindow(QMainWindow):
         if sid:
             self.show_session(sid)
 
+    # ================================================================ timeline
     def set_active_session(self, session_id):
         self.active_session_id = session_id
         self.show_session(session_id)
@@ -534,11 +348,11 @@ class MainWindow(QMainWindow):
     def show_session(self, session_id):
         self.viewed_session_id = session_id
         self.title_stack.setCurrentIndex(0)
-        while self.timeline.count() > 2:  # keep empty label + stretch
-            item = self.timeline.takeAt(1)
+        while self.timeline.count() > 3:   # keep summary box, empty label and stretch
+            item = self.timeline.takeAt(2)
             if item.widget():
                 item.widget().deleteLater()
-        self._entry_count = 0
+        self.entry_count = 0
         session = self.store.get_session(session_id) if session_id else None
         if session:
             for d in self.store.dictations(session_id, limit=400):
@@ -547,8 +361,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._scroll_to_bottom)
 
     def add_dictation(self, session_id, dictation):
-        """Called by the app after a dictation was stored."""
-        if session_id == self.viewed_session_id:
+        """Called after a dictation was stored; also follows an automatic session switch."""
+        if session_id != self.active_session_id:
+            self.active_session_id = session_id
+            self.show_session(session_id)
+        elif session_id == self.viewed_session_id:
             self._append_entry(dictation)
             self._update_header(self.store.get_session(session_id))
             QTimer.singleShot(30, self._scroll_to_bottom)
@@ -560,13 +377,14 @@ class MainWindow(QMainWindow):
         entry.copyRequested.connect(self._copy_text)
         entry.deleteRequested.connect(self._delete_dictation)
         self.timeline.insertWidget(self.timeline.count() - 1, entry)
-        self._entry_count += 1
+        self.entry_count += 1
         self.empty_label.setVisible(False)
 
     def _update_header(self, session):
         if not session:
             self._set_title('No session')
             self.meta_label.setText('')
+            self.summary_box.set_summary(None)
         else:
             self._set_title(session['title'] or 'New session')
             started = time.strftime('%H:%M', time.localtime(session['created_at']))
@@ -575,9 +393,10 @@ class MainWindow(QMainWindow):
             self.meta_label.setText(
                 f"Started {started}  ·  {plural(session['dictation_count'], 'dictation')}  ·  "
                 f"{plural(session['word_count'], 'word')}  ·  {fmt_duration(session['audio_s'])} audio")
-        is_active = session and session['id'] == self.active_session_id
+            self.summary_box.set_summary(session.get('summary'))
+        is_active = bool(session) and session['id'] == self.active_session_id
         self.continue_btn.setVisible(bool(session) and not is_active)
-        if self._entry_count == 0:
+        if self.entry_count == 0:
             keys = ' + '.join(hotkey_parts(
                 ConfigManager.get_config_value('recording_options', 'activation_key')))
             self.empty_label.setText(
@@ -586,28 +405,39 @@ class MainWindow(QMainWindow):
             self.empty_label.setVisible(True)
 
     def _set_title(self, title):
-        self._full_title = title
+        self.full_title = title
         self._elide_title()
 
     def _elide_title(self):
-        title = getattr(self, '_full_title', '')
         width = max(120, self.title_stack.width())
-        self.title_label.setText(
-            self.title_label.fontMetrics().elidedText(title, Qt.TextElideMode.ElideRight, width))
-        self.title_label.setToolTip(f'{title} (double-click to rename)')
+        self.title_label.setText(self.title_label.fontMetrics().elidedText(
+            self.full_title, Qt.TextElideMode.ElideRight, width))
+        self.title_label.setToolTip(f'{self.full_title} (double-click to rename)')
 
     def _scroll_to_bottom(self):
         bar = self.scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
+
+    def set_summary(self, session_id, summary):
+        self.summarizing.discard(session_id)
+        if session_id == self.viewed_session_id:
+            self.summary_box.set_summary(summary)
 
     # ================================================================ session actions
     def _session_menu(self, session_id):
         menu = QMenu(self)
         if not session_id:
             return menu
+        busy = session_id in self.summarizing
         menu.addAction(theme.icon('edit', theme.MUTED), 'Rename',
                        lambda: (self.show_session(session_id), self._start_rename()))
-        menu.addAction(theme.icon('terminal', theme.MUTED), 'Copy for Claude Code',
+        summary = menu.addAction(theme.icon('sparkle', theme.MUTED),
+                                 'Summarising…' if busy else 'Summarise with local LLM',
+                                 lambda: self.request_summary(session_id))
+        summary.setEnabled(not busy)
+        menu.addAction(theme.icon('send', theme.MUTED), 'Send to Claude Code',
+                       lambda: self.sendToClaudeRequested.emit(session_id))
+        menu.addAction(theme.icon('copy', theme.MUTED), 'Copy as context',
                        lambda: self.copy_session(True, session_id))
         menu.addAction(theme.icon('copy', theme.MUTED), 'Copy as Markdown',
                        lambda: self.copy_session(False, session_id))
@@ -624,13 +454,21 @@ class MainWindow(QMainWindow):
         if sid:
             self._session_menu(sid).exec(self.session_list.viewport().mapToGlobal(pos))
 
+    def request_summary(self, session_id=None):
+        sid = session_id or self.viewed_session_id
+        if not sid or sid in self.summarizing:
+            return
+        self.summarizing.add(sid)
+        self.show_toast('Summarising with the local LLM…')
+        self.summarizeRequested.emit(sid)
+
     def copy_session(self, for_claude, session_id=None):
         sid = session_id or self.viewed_session_id
         if not sid:
             return
         QGuiApplication.clipboard().setText(self.store.session_markdown(sid, for_claude=for_claude))
-        self.toast.show_message('Copied — paste it into Claude Code' if for_claude
-                                else 'Session copied as Markdown')
+        self.show_toast('Copied — paste it into your prompt' if for_claude
+                        else 'Session copied as Markdown')
 
     def export_session(self, session_id):
         session = self.store.get_session(session_id)
@@ -641,7 +479,7 @@ class MainWindow(QMainWindow):
         if path:
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(self.store.session_markdown(session_id))
-            self.toast.show_message(f'Exported to {os.path.basename(path)}')
+            self.show_toast(f'Exported to {os.path.basename(path)}')
 
     def delete_session(self, session_id):
         session = self.store.get_session(session_id)
@@ -668,12 +506,12 @@ class MainWindow(QMainWindow):
 
     def _copy_text(self, text):
         QGuiApplication.clipboard().setText(text)
-        self.toast.show_message('Copied')
+        self.show_toast('Copied')
 
     def _start_rename(self):
         if not self.viewed_session_id:
             return
-        self.title_edit.setText(getattr(self, '_full_title', self.title_label.text()))
+        self.title_edit.setText(self.full_title)
         self.title_stack.setCurrentIndex(1)
         self.title_edit.setFocus()
         self.title_edit.selectAll()
@@ -688,17 +526,18 @@ class MainWindow(QMainWindow):
             self.refresh_sessions()
 
     # ================================================================ status
-    def set_engine_status(self, state, text, detail=None):
-        self.engine_state = (state, text)
-        self.status_label.setText(text)
-        self.status_label.setProperty('state', state)
+    def set_engine_status(self, status):
+        """Show an EngineStatus in the top bar, context panel and settings page."""
+        self.engine_status = status
+        self.status_label.setText(status.title)
+        self.status_label.setProperty('state', status.state.value)
         theme.restyle(self.status_label)
-        if detail is not None:
-            self.speed_label.setText(detail)
+        self.context_panel.set_engine(status)
+        self.settings_page.set_engine_info(status)
         self._update_dock_label()
 
     def set_recording_state(self, status):
-        recording = status == 'recording'
+        recording = status == Status.RECORDING
         self.record_btn.setProperty('recording', 'true' if recording else 'false')
         self.record_btn.setIcon(theme.icon('stop' if recording else 'mic', theme.ACCENT_INK))
         self.record_btn.setToolTip('Stop' if recording else 'Start dictating into this session')
@@ -706,36 +545,34 @@ class MainWindow(QMainWindow):
         self.dock_wave.active = recording
         if not recording:
             self.dock_wave.reset()
-        if status in ('recording', 'transcribing'):
+        if status in (Status.RECORDING, Status.TRANSCRIBING):
             self.status_label.setText('Listening…' if recording else 'Transcribing…')
             self.status_label.setProperty('state', 'recording')
             theme.restyle(self.status_label)
-        else:
-            self.set_engine_status(*self.engine_state)
+        elif self.engine_status:
+            self.set_engine_status(self.engine_status)
 
     def push_level(self, level):
         self.dock_wave.push(level)
 
     def set_last_target(self, label):
-        self._last_target = label
+        self.last_target = label
         self._update_dock_label()
 
     def _update_dock_label(self):
-        target = getattr(self, '_last_target', '')
         device = ConfigManager.get_config_value('recording_options', 'sound_device') or 'default mic'
-        text = f'Last typed into {target}' if target else 'Record button → this session only'
+        text = f'Last typed into {self.last_target}' if self.last_target else 'Record button → this session only'
         self.dock_label.setText(f'{text}  ·  mic: {device}')
 
     def refresh_stats(self):
         stats = self.store.stats()
         lat, dur = stats['avg_latency'], stats['avg_duration']
-        self.stat_rows['Avg latency'].setText(f'{lat:.2f} s' if lat else '—')
         speed = f'{dur / lat:.0f}× realtime' if lat and dur else ''
-        self.stat_rows['Avg speed'].setText(speed or '—')
+        self.context_panel.set_speed(lat, speed)
         self.speed_label.setText(speed)
 
     def refresh_config_views(self):
-        """Re-read config-driven bits of the UI (after load or settings save)."""
+        """Re-read config-driven bits of the UI (after load or a settings change)."""
         rec = ConfigManager.get_config_section('recording_options')
         while self.hotkey_lay.count():
             w = self.hotkey_lay.takeAt(0).widget()
@@ -750,58 +587,17 @@ class MainWindow(QMainWindow):
         mode = rec.get('recording_mode') or 'continuous'
         for b in self.mode_group.buttons():
             b.setChecked(b.property('mode_key') == mode)
-
-        for keys, toggle in self.quick_toggles.items():
-            toggle.blockSignals(True)
-            toggle.setChecked(bool(ConfigManager.get_config_value(*keys)))
-            toggle.blockSignals(False)
-
-        vocab = ConfigManager.get_config_value('model_options', 'common', 'vocabulary') or ''
-        words = [w.strip() for w in vocab.replace('\n', ',').split(',') if w.strip()]
-        shown = words[:12] + ([f'+ {len(words) - 12}'] if len(words) > 12 else [])
-        self.vocab_chips.set_chips(shown or ['none yet'])
-
-        engine = ConfigManager.get_config_value('model_options', 'engine')
-        if engine == 'whispercpp':
-            model = ConfigManager.get_config_value('model_options', 'whispercpp', 'model_path') or ''
-            self.stat_rows['Engine'].setText('whisper.cpp · Vulkan')
-            self.stat_rows['Model'].setText(os.path.basename(model).replace('ggml-', '').replace('.bin', '') or '—')
-        else:
-            self.stat_rows['Engine'].setText('faster-whisper · CPU')
-            self.stat_rows['Model'].setText(ConfigManager.get_config_value('model_options', 'local', 'model') or '—')
-        self.refresh_mcp_status()
+        self.context_panel.refresh_config()
+        self.settings_page.load_from_config()
         self.refresh_stats()
         self._update_dock_label()
 
-    def refresh_mcp_status(self):
-        registered = self.mcp_status_fn()
-        self.mcp_dot.setStyleSheet(f"background: {theme.INFO if registered else theme.FAINT}; border-radius: 4px;")
-        self.mcp_title.setText('MCP server registered' if registered else 'MCP server not set up')
-        self.mcp_desc.setText(
-            'Claude Code can search and read your sessions with the whisperwriter tools.'
-            if registered else
-            'Register the whisperwriter MCP server so Claude Code can look back through your '
-            'dictations for context.')
-        self.mcp_btn.setVisible(not registered)
+    def refresh_mcp(self, registered, message=None):
+        self.context_panel.set_mcp_registered(registered)
+        self.settings_page.refresh_mcp(registered, message)
 
-    def _quick_toggle(self, keys, checked):
-        old = ConfigManager.snapshot()
-        ConfigManager.set_config_value(checked, *keys)
-        ConfigManager.save_config()
-        self.settings_page.load_from_config()
-        self.settingsApplied.emit(old)
-
-    def _on_mode_clicked(self, button):
-        old = ConfigManager.snapshot()
-        ConfigManager.set_config_value(button.property('mode_key'), 'recording_options', 'recording_mode')
-        ConfigManager.save_config()
-        self.settings_page.load_from_config()
-        self.settingsApplied.emit(old)
-
-    def _on_settings_saved(self, old):
-        self.refresh_config_views()
-        self.settingsApplied.emit(old)
-        self.toast.show_message('Settings saved and applied')
+    def show_toast(self, message, ms=2400):
+        self.toast.show_message(message, ms)
 
     # ================================================================ navigation
     def show_settings(self, section=None):
@@ -823,18 +619,21 @@ class MainWindow(QMainWindow):
 
     def open_palette(self):
         self.bring_to_front()
+        sid = lambda: self.viewed_session_id   # noqa: E731
         actions = [
             ('New session', 'plus', 'Ctrl N', self.newSessionRequested.emit),
-            ('Copy current session for Claude Code', 'terminal', '',
-             lambda: self.copy_session(True)),
+            ('Send current session to Claude Code', 'send', '',
+             lambda: sid() and self.sendToClaudeRequested.emit(sid())),
+            ('Copy current session as context', 'copy', '', lambda: self.copy_session(True)),
             ('Copy current session as Markdown', 'copy', '', lambda: self.copy_session(False)),
+            ('Summarise session with local LLM', 'sparkle', '', self.request_summary),
             ('Start / stop dictation', 'mic', '', self.recordClicked.emit),
             ('Rename current session', 'edit', '', self._start_rename),
-            ('Export current session…', 'download', '',
-             lambda: self.viewed_session_id and self.export_session(self.viewed_session_id)),
+            ('Export current session…', 'download', '', lambda: sid() and self.export_session(sid())),
             ('Open settings', 'settings', 'Ctrl ,', self.show_settings),
             ('Set up Claude Code (MCP)', 'terminal', '', lambda: self.show_settings('claude')),
             ('Edit project vocabulary', 'sparkle', '', lambda: self.show_settings('correction')),
+            ('Change theme', 'palette', '', lambda: self.show_settings('appearance')),
         ]
         self.palette = CommandPalette(self, self.store, actions, self.show_session)
         self.palette.open_centered()
@@ -853,6 +652,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.context_panel.setVisible(self.width() >= 1180)
+        self.toast.reposition()
         QTimer.singleShot(0, self._elide_title)
 
     def closeEvent(self, event):

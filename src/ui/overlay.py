@@ -30,7 +30,9 @@ class _Pill(QWidget):
         path = QPainterPath()
         path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5),
                             self.radius, self.radius)
-        p.fillPath(path, QColor(23, 24, 27, 244))
+        fill = QColor(theme.SURFACE)
+        fill.setAlpha(244)
+        p.fillPath(path, fill)
         p.setPen(QPen(QColor(theme.BORDER_2), 1))
         p.drawPath(path)
 
@@ -50,8 +52,10 @@ class RecorderOverlay(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(18, 14, 18, 22)
         self.pill = _Pill()
+        shadow_color = QColor(theme.SHADOW)
+        shadow_color.setAlpha(150 if theme.NAME == 'dark' else 70)
         shadow = QGraphicsDropShadowEffect(self.pill, blurRadius=28, offset=QPoint(0, 8),
-                                           color=QColor(0, 0, 0, 150))
+                                           color=shadow_color)
         self.pill.setGraphicsEffect(shadow)
         outer.addWidget(self.pill)
 
@@ -65,7 +69,8 @@ class RecorderOverlay(QWidget):
 
         self._started = 0.0
         self.tick = QTimer(self, interval=250, timeout=self._update_timer)
-        self.hide_timer = QTimer(self, singleShot=True, timeout=self.hide)
+        self.hide_timer = QTimer(self, singleShot=True, timeout=self._on_card_timeout)
+        self._return_to_recording = False
 
     # ------------------------------------------------------------------ build
     def _row(self):
@@ -78,8 +83,7 @@ class RecorderOverlay(QWidget):
     def _build_recording(self):
         w, lay = self._row()
         lay.addWidget(theme.dot(theme.ACCENT, 10))
-        self.timer_label = theme.label('0:00', 'mono')
-        self.timer_label.setStyleSheet(f'color: {theme.TEXT};')
+        self.timer_label = theme.label('0:00', 'value')
         self.timer_label.setFixedWidth(38)
         lay.addWidget(self.timer_label)
         self.wave = Waveform(bars=20)
@@ -88,8 +92,7 @@ class RecorderOverlay(QWidget):
         self.target_label = theme.label('', 'faint')
         lay.addWidget(self.target_label)
         stop = theme.tool_button('stop', 'Stop and transcribe', theme.TEXT, 14)
-        stop.setStyleSheet(f'QToolButton {{ background: {theme.HOVER}; border-radius: 16px; '
-                           f'min-width: 32px; min-height: 32px; }}')
+        stop.setProperty('role', 'pill-stop')
         stop.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         stop.clicked.connect(self.stopRequested)
         lay.addWidget(stop)
@@ -106,8 +109,7 @@ class RecorderOverlay(QWidget):
         lay.addWidget(self.spinner)
         self.busy_label = QLabel('Transcribing…')
         lay.addWidget(self.busy_label)
-        self.busy_detail = theme.label('', 'mono')
-        self.busy_detail.setStyleSheet(f'color: {theme.INFO_TEXT};')
+        self.busy_detail = theme.label('', 'info-mono')
         lay.addWidget(self.busy_detail)
         return w
 
@@ -130,10 +132,16 @@ class RecorderOverlay(QWidget):
         return w
 
     # ------------------------------------------------------------------ states
-    def show_recording(self, target_label=''):
+    @property
+    def is_showing_result(self):
+        return self.isVisible() and self.hide_timer.isActive()
+
+    def show_recording(self, target_label='', restart_timer=True):
         self.hide_timer.stop()
+        self._return_to_recording = False
         self.pill.radius = 28
-        self._started = time.monotonic()
+        if restart_timer or not self._started:
+            self._started = time.monotonic()
         self.wave.reset()
         self.target_label.setText(f'→ {target_label}' if target_label else '')
         self.target_label.setVisible(bool(target_label))
@@ -158,14 +166,18 @@ class RecorderOverlay(QWidget):
         self._show_page(1)
         self._present()
 
-    def show_result(self, text, head, hint='', ms=2600):
+    def show_result(self, text, head, hint='', ms=2600, then_recording=False):
+        """Show what was typed. With `then_recording` (continuous mode) the pill returns to
+        the listening view afterwards instead of hiding."""
         self._show_card('check', theme.INFO, text, head, hint, ms)
+        self._return_to_recording = then_recording
 
     def show_message(self, text, head='WhisperWriter', error=True, ms=4000):
         self._show_card('x' if error else 'check', theme.DANGER if error else theme.INFO,
                         text, head, '', ms)
 
     def _show_card(self, icon_name, color, text, head, hint, ms):
+        self._return_to_recording = False
         self.tick.stop()
         self.spinner.stop()
         self.pill.radius = 16
@@ -184,7 +196,15 @@ class RecorderOverlay(QWidget):
         self._present()
         self.hide_timer.start(ms)
 
+    def _on_card_timeout(self):
+        if self._return_to_recording:
+            self.show_recording(self.target_label.text().removeprefix('→ '), restart_timer=False)
+        else:
+            self.hide()
+
     def hide(self):
+        self._return_to_recording = False
+        self._started = 0.0
         self.tick.stop()
         self.spinner.stop()
         super().hide()

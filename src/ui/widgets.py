@@ -1,13 +1,29 @@
-"""Reusable custom widgets: toggle switch, live waveform, wrapping chip row, toast."""
+"""Reusable custom widgets (toggle switch, live waveform, wrapping chip row, toast) and
+layout helpers."""
 
 from collections import deque
 
 from PySide6.QtCore import (Property, QEasingCurve, QPoint, QPropertyAnimation, QRect, QSize,
                             Qt, QTimer)
 from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QLabel, QLayout, QSizePolicy, QWidget
+from PySide6.QtWidgets import (QAbstractButton, QHBoxLayout, QLabel, QLayout, QSizePolicy,
+                               QVBoxLayout, QWidget)
 
 from ui import theme
+
+
+def vbox(margins=(0, 0, 0, 0), spacing=0, parent=None):
+    lay = QVBoxLayout(parent) if parent is not None else QVBoxLayout()
+    lay.setContentsMargins(*margins)
+    lay.setSpacing(spacing)
+    return lay
+
+
+def hbox(margins=(0, 0, 0, 0), spacing=0, parent=None):
+    lay = QHBoxLayout(parent) if parent is not None else QHBoxLayout()
+    lay.setContentsMargins(*margins)
+    lay.setSpacing(spacing)
+    return lay
 
 
 class Toggle(QAbstractButton):
@@ -46,7 +62,7 @@ class Toggle(QAbstractButton):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        off, on = QColor('#34363C'), QColor(theme.ACCENT)
+        off, on = QColor(theme.TRACK_OFF), QColor(theme.ACCENT)
         animating = self._anim.state() == QPropertyAnimation.State.Running
         t = self._offset if animating else (1.0 if self.isChecked() else 0.0)
         track = QColor(int(off.red() + (on.red() - off.red()) * t),
@@ -59,7 +75,7 @@ class Toggle(QAbstractButton):
         p.drawRoundedRect(self.rect(), 10, 10)
         knob = 14
         x = 3 + (self.width() - knob - 6) * t
-        p.setBrush(QColor('#FFFFFF'))
+        p.setBrush(QColor(theme.KNOB))
         p.drawEllipse(int(x), 3, knob, knob)
         if self.hasFocus():
             p.setPen(QColor(theme.INFO))
@@ -70,11 +86,9 @@ class Toggle(QAbstractButton):
 class Waveform(QWidget):
     """Scrolling bar meter fed with 0..1 input levels."""
 
-    def __init__(self, bars=26, color=theme.ACCENT, idle_color='#3A3C42', parent=None):
+    def __init__(self, bars=26, parent=None):
         super().__init__(parent)
         self.levels = deque([0.0] * bars, maxlen=bars)
-        self.color = QColor(color)
-        self.idle_color = QColor(idle_color)
         self.active = False
         self.setMinimumHeight(28)
         self.setFixedWidth(bars * 6)
@@ -95,7 +109,8 @@ class Waveform(QWidget):
         h = self.height()
         for i, level in enumerate(self.levels):
             bar_h = max(4, int(4 + level * (h - 4)))
-            p.setBrush(self.color if self.active and level > 0.02 else self.idle_color)
+            active = self.active and level > 0.02
+            p.setBrush(QColor(theme.ACCENT if active else theme.WAVE_IDLE))
             p.drawRoundedRect(i * 6, (h - bar_h) // 2, 3, bar_h, 1.5, 1.5)
 
 
@@ -194,8 +209,11 @@ class Toast(QWidget):
     def show_message(self, message, ms=2400):
         self.text.setText(message)
         self.adjustSize()
-        parent = self.parentWidget()
-        self.move(parent.width() - self.width() - 24, parent.height() - self.height() - 24)
+        self.reposition()
         self.raise_()
         self.show()
         self.timer.start(ms)
+
+    def reposition(self):
+        parent = self.parentWidget()
+        self.move(parent.width() - self.width() - 24, parent.height() - self.height() - 24)

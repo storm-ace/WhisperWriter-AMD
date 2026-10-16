@@ -12,11 +12,16 @@ app's hotkey/clipboard logic. Transcription itself goes over HTTP
 """
 
 import os
+import re
 import socket
 import subprocess
 import time
 
+from sessions import app_data_dir
 from utils import ConfigManager
+
+_VULKAN_DEVICE = re.compile(r'ggml_vulkan: 0 = (.+?)(?: \(|\s*\|)')
+_BACKEND = re.compile(r'using (\w+?)\d* backend')
 
 
 class WhisperCppServer:
@@ -24,6 +29,9 @@ class WhisperCppServer:
 
     def __init__(self):
         self.process = None
+        self._log_file = None
+        # The server's stderr is kept so the GPU it picked can be shown in the app.
+        self.log_path = os.path.join(app_data_dir(), 'whisper-server.log')
         options = ConfigManager.get_config_section('model_options').get('whispercpp', {})
         self.binary_path = options.get('binary_path')
         self.model_path = options.get('model_path')
@@ -93,16 +101,21 @@ class WhisperCppServer:
         if os.name == 'nt':
             # Avoid a console window flashing up during the hidden (pythonw) autostart.
             creationflags = subprocess.CREATE_NO_WINDOW
+        os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
+        self._log_file = open(self.log_path, 'w', encoding='utf-8', errors='replace')
         self.process = subprocess.Popen(
-            cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cmd, env=env, stdout=subprocess.DEVNULL, stderr=self._log_file,
             creationflags=creationflags)
+        process = self.process
 
         # Wait until the port is open (loading the model takes a few seconds).
         deadline = time.time() + wait_timeout
         while time.time() < deadline:
-            if self.process.poll() is not None:
+            if self.process is not process:
+                return False  # stop() was called while the model was loading
+            if process.poll() is not None:
                 ConfigManager.console_print(
-                    f'whisper.cpp server exited immediately (exit {self.process.returncode}).')
+                    f'whisper.cpp server exited immediately (exit {process.returncode}).')
                 self.process = None
                 return False
             if self._is_port_open():
@@ -115,13 +128,32 @@ class WhisperCppServer:
         self.stop()
         return False
 
+    def device_info(self):
+        """
+        (backend, device) the server reported at start-up, e.g. ('Vulkan', 'AMD Radeon(TM)
+        8060S Graphics') or ('CPU', None). (None, None) when unknown, e.g. for a server that
+        was already running when the app started.
+        """
+        try:
+            with open(self.log_path, encoding='utf-8', errors='replace') as f:
+                log = f.read()
+        except OSError:
+            return None, None
+        backend = _BACKEND.search(log)
+        device = _VULKAN_DEVICE.search(log)
+        return (backend.group(1) if backend else None), (device.group(1).strip() if device else None)
+
     def stop(self):
         """Stop the server process (if it was started by this app)."""
-        if self.process is not None and self.process.poll() is None:
-            ConfigManager.console_print('Stopping whisper.cpp server...')
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
+        process = self.process
         self.process = None
+        if process is not None and process.poll() is None:
+            ConfigManager.console_print('Stopping whisper.cpp server...')
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        if self._log_file:
+            self._log_file.close()
+            self._log_file = None

@@ -15,6 +15,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Enter there and wraps file names in backticks.
 - Project vocabulary, fed to Whisper as part of the initial prompt.
 - Floating recorder pill with live waveform that never steals focus.
+- "Send to Claude Code": pastes a session into the Claude Code window as context (no Enter).
+- Session summaries with the local LLM, stored with the session and exposed over MCP.
+- Appearance settings: dark, light or system theme and four accent colours.
+- Real GPU detection: the engine card shows the device whisper-server picked.
+
+### Changed (continuous mode)
+- The microphone stays open while a segment is transcribed, so nothing said meanwhile is lost.
+- Stop (■, record button or hotkey) now ends continuous mode; cancel and stop never block the UI.
+- Claude Code is detected by window title plus a running Claude process.
 
 ### Changed
 - Settings apply in-process; only the engine/servers whose settings changed restart.

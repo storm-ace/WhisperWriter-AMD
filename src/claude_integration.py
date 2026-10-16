@@ -6,8 +6,12 @@ import shutil
 import subprocess
 import sys
 
-SERVER_NAME = 'whisperwriter'
+from mcp_server import SERVER_NAME, TOOLS
+
 MCP_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mcp_server.py')
+TOOL_NAMES = [tool['name'] for tool in TOOLS]
+CLAUDE_CONFIG = os.path.join(os.path.expanduser('~'), '.claude.json')
+_registered_cache = (None, False)   # (mtime of ~/.claude.json, result)
 
 
 def _console_python():
@@ -37,23 +41,31 @@ def add_command_text(db_path=None):
 
 
 def is_registered():
-    """True if ~/.claude.json lists the server (user scope or any project scope)."""
-    path = os.path.join(os.path.expanduser('~'), '.claude.json')
+    """True if ~/.claude.json lists the server (user scope or any project scope).
+
+    The file can be several MB, so the answer is cached until the file changes.
+    """
+    global _registered_cache
     try:
-        with open(path, encoding='utf-8') as f:
+        mtime = os.path.getmtime(CLAUDE_CONFIG)
+    except OSError:
+        return False
+    if _registered_cache[0] == mtime:
+        return _registered_cache[1]
+    try:
+        with open(CLAUDE_CONFIG, encoding='utf-8') as f:
             data = json.load(f)
     except (OSError, ValueError):
         return False
-    if SERVER_NAME in (data.get('mcpServers') or {}):
-        return True
-    for project in (data.get('projects') or {}).values():
-        if SERVER_NAME in ((project or {}).get('mcpServers') or {}):
-            return True
-    return False
+    found = SERVER_NAME in (data.get('mcpServers') or {}) or any(
+        SERVER_NAME in ((project or {}).get('mcpServers') or {})
+        for project in (data.get('projects') or {}).values())
+    _registered_cache = (mtime, found)
+    return found
 
 
 def register(db_path=None):
-    """Run `claude mcp add`. Returns (ok, message)."""
+    """Run `claude mcp add` (blocking; call it off the UI thread). Returns (ok, message)."""
     claude = shutil.which('claude')
     if not claude:
         return False, 'The claude CLI was not found on PATH. Copy the command and run it in a terminal.'

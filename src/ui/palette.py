@@ -1,5 +1,6 @@
 """Ctrl+K command palette: run actions and jump into sessions by full-text search."""
 
+import html
 import time
 
 from PySide6.QtCore import QEvent, QSize, Qt
@@ -29,14 +30,18 @@ class _Row(QWidget):
             text.addWidget(s)
         lay.addLayout(text, 1)
         if hint:
-            lay.addWidget(theme.label(hint, 'kbd' if any(k in hint for k in ('Ctrl', 'Enter')) else 'mono'))
+            is_key = any(k in hint for k in ('Ctrl', 'Enter'))
+            hint_label = theme.label(hint, 'kbd' if is_key else 'mono')
+            if is_key:
+                hint_label.setFixedHeight(22)
+            lay.addWidget(hint_label)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
 
 def _highlight(snippet):
-    import html
+    """FTS snippet with [match] markers -> HTML with the matches highlighted."""
     s = html.escape(snippet or '')
-    return (s.replace('[', f'<span style="background:#3A2416;color:#FFD3BF;">')
+    return (s.replace('[', f'<span style="background:{theme.ACCENT_SOFT};color:{theme.WARM_TEXT};">')
              .replace(']', '</span>'))
 
 
@@ -77,8 +82,8 @@ class CommandPalette(QDialog):
         lay.addLayout(top)
 
         line = QFrame()
+        line.setObjectName('PaletteLine')
         line.setFixedHeight(1)
-        line.setStyleSheet(f'background: {theme.BORDER};')
         lay.addWidget(line)
 
         self.list = QListWidget()

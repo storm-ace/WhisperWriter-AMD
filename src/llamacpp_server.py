@@ -16,6 +16,11 @@ import time
 from utils import ConfigManager
 
 
+# llm_correction settings that change how the server runs; a change restarts it.
+SERVER_KEYS = ('enabled', 'binary_path', 'model_path', 'lib_path', 'host', 'port',
+               'n_gpu_layers', 'context_size', 'n_threads', 'auto_start')
+
+
 class LlamaCppServer:
     """Start, monitor and stop a llama.cpp `llama-server` process."""
 
@@ -92,12 +97,15 @@ class LlamaCppServer:
         self.process = subprocess.Popen(
             cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=creationflags)
+        process = self.process
 
         deadline = time.time() + wait_timeout
         while time.time() < deadline:
-            if self.process.poll() is not None:
+            if self.process is not process:
+                return False  # stop() was called while the model was loading
+            if process.poll() is not None:
                 ConfigManager.console_print(
-                    f'llama.cpp server exited immediately (exit {self.process.returncode}).')
+                    f'llama.cpp server exited immediately (exit {process.returncode}).')
                 self.process = None
                 return False
             if self._is_port_open():
@@ -111,11 +119,12 @@ class LlamaCppServer:
 
     def stop(self):
         """Stop the server process (if it was started by this app)."""
-        if self.process is not None and self.process.poll() is None:
-            ConfigManager.console_print('Stopping llama.cpp server...')
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
+        process = self.process
         self.process = None
+        if process is not None and process.poll() is None:
+            ConfigManager.console_print('Stopping llama.cpp server...')
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()

@@ -16,20 +16,26 @@ import sqlite3
 import sys
 import time
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2   # 2: sessions.summary
+
+
+def app_data_dir():
+    """Per-user data folder: %APPDATA%\\WhisperWriter on Windows, XDG data dir elsewhere."""
+    if os.name == 'nt':
+        base = os.environ.get('APPDATA') or os.path.expanduser('~')
+        return os.path.join(base, 'WhisperWriter')
+    if sys.platform == 'darwin':
+        return os.path.expanduser('~/Library/Application Support/WhisperWriter')
+    base = os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share')
+    return os.path.join(base, 'whisperwriter')
 
 
 def default_db_path():
-    """Per-user data location: %APPDATA%\\WhisperWriter on Windows, XDG data dir elsewhere."""
-    if os.name == 'nt':
-        base = os.environ.get('APPDATA') or os.path.expanduser('~')
-        folder = os.path.join(base, 'WhisperWriter')
-    elif sys.platform == 'darwin':
-        folder = os.path.expanduser('~/Library/Application Support/WhisperWriter')
-    else:
-        base = os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share')
-        folder = os.path.join(base, 'whisperwriter')
-    return os.path.join(folder, 'sessions.db')
+    return os.path.join(app_data_dir(), 'sessions.db')
+
+
+def fmt_timestamp(ts, fmt='%Y-%m-%d %H:%M'):
+    return time.strftime(fmt, time.localtime(ts))
 
 
 def fts_query(text):
@@ -54,10 +60,10 @@ class SessionStore:
             if not os.path.isfile(self.path):
                 raise FileNotFoundError(f'No session database at {self.path}')
             uri = 'file:{}?mode=ro'.format(self.path.replace('\\', '/'))
-            self.conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+            self.conn = sqlite3.connect(uri, uri=True)
         else:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            self.conn = sqlite3.connect(self.path, check_same_thread=False)
+            self.conn = sqlite3.connect(self.path)
             self.conn.execute('PRAGMA journal_mode=WAL')
         self.conn.row_factory = sqlite3.Row
         self.conn.execute('PRAGMA foreign_keys=ON')
@@ -80,7 +86,7 @@ class SessionStore:
                 title       TEXT,
                 created_at  REAL NOT NULL,
                 updated_at  REAL NOT NULL,
-                pinned      INTEGER NOT NULL DEFAULT 0
+                summary     TEXT
             );
             CREATE TABLE IF NOT EXISTS dictations (
                 id          INTEGER PRIMARY KEY,
@@ -116,7 +122,12 @@ class SessionStore:
             ''')
         except sqlite3.OperationalError:
             pass  # SQLite without FTS5: search falls back to LIKE
-        c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
+        version = c.execute('PRAGMA user_version').fetchone()[0]
+        columns = {row[1] for row in c.execute('PRAGMA table_info(sessions)')}
+        if 'summary' not in columns:          # databases created by schema version 1
+            c.execute('ALTER TABLE sessions ADD COLUMN summary TEXT')
+        if version < SCHEMA_VERSION:
+            c.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
         c.commit()
 
     # ------------------------------------------------------------------ writes
@@ -167,6 +178,10 @@ class SessionStore:
                           (title.strip() or None, session_id))
         self.conn.commit()
 
+    def set_summary(self, session_id, summary):
+        self.conn.execute('UPDATE sessions SET summary = ? WHERE id = ?', (summary, session_id))
+        self.conn.commit()
+
     def delete_session(self, session_id):
         self.conn.execute('DELETE FROM sessions WHERE id = ?', (session_id,))
         self.conn.commit()
@@ -184,7 +199,7 @@ class SessionStore:
         self.conn.commit()
 
     # ------------------------------------------------------------------ reads
-    _SESSION_COLS = '''s.id, s.title, s.created_at, s.updated_at, s.pinned,
+    _SESSION_COLS = '''s.id, s.title, s.created_at, s.updated_at, s.summary,
         COUNT(d.id) AS dictation_count,
         COALESCE(SUM(d.word_count), 0) AS word_count,
         COALESCE(SUM(d.duration_s), 0) AS audio_s,
@@ -195,7 +210,7 @@ class SessionStore:
         rows = self.conn.execute(
             f'''SELECT {self._SESSION_COLS} FROM sessions s
                 LEFT JOIN dictations d ON d.session_id = s.id
-                GROUP BY s.id ORDER BY s.pinned DESC, s.updated_at DESC LIMIT ? OFFSET ?''',
+                GROUP BY s.id ORDER BY s.updated_at DESC LIMIT ? OFFSET ?''',
             (limit, offset)).fetchall()
         return [dict(r) for r in rows]
 
@@ -285,18 +300,22 @@ class SessionStore:
             return ''
         items = self.dictations(session_id)
         title = session['title'] or 'Untitled session'
-        started = time.strftime('%Y-%m-%d %H:%M', time.localtime(session['created_at']))
+        started = fmt_timestamp(session['created_at'])
         lines = []
         for d in items:
-            stamp = time.strftime('%H:%M', time.localtime(d['created_at']))
+            stamp = fmt_timestamp(d['created_at'], '%H:%M')
             target = f" → {d['target_app']}" if d.get('target_app') else ''
             lines.append(f"- **{stamp}**{target}: {d['text']}")
         body = '\n'.join(lines) or '_(no dictations)_'
+        summary = (session.get('summary') or '').strip()
         if for_claude:
+            summary_block = f'Summary:\n{summary}\n\n' if summary else ''
             return (f'<dictation-session title="{title}" started="{started}">\n'
                     f'Context from my earlier voice dictation (WhisperWriter), oldest first:\n\n'
-                    f'{body}\n</dictation-session>\n')
-        return f'## {title}\n\n_Started {started} · {len(items)} dictations_\n\n{body}\n'
+                    f'{summary_block}{body}\n</dictation-session>\n')
+        summary_block = f'### Summary\n\n{summary}\n\n### Dictations\n\n' if summary else ''
+        return (f'## {title}\n\n_Started {started} · {len(items)} dictations_\n\n'
+                f'{summary_block}{body}\n')
 
     def close(self):
         self.conn.close()

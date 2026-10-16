@@ -16,10 +16,9 @@ import argparse
 import json
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sessions import SessionStore, default_db_path  # noqa: E402
+from sessions import SessionStore, default_db_path, fmt_timestamp  # noqa: E402
 
 SERVER_NAME = 'whisperwriter'
 SERVER_VERSION = '2.0.0'
@@ -54,8 +53,8 @@ TOOLS = [
     },
     {
         'name': 'get_session',
-        'description': ('Full transcript of one dictation session as Markdown. Omit session_id '
-                        'for the most recent session.'),
+        'description': ('Full transcript of one dictation session as Markdown, including its '
+                        'summary when one was made. Omit session_id for the most recent session.'),
         'inputSchema': {
             'type': 'object',
             'properties': {
@@ -80,10 +79,6 @@ TOOLS = [
 ]
 
 
-def _fmt_time(ts):
-    return time.strftime('%Y-%m-%d %H:%M', time.localtime(ts))
-
-
 class Server:
     def __init__(self, db_path):
         self.db_path = db_path
@@ -103,7 +98,7 @@ class Server:
             return f'No dictations match "{query}".'
         lines = [f'{len(hits)} match(es) for "{query}":', '']
         for h in hits:
-            lines.append(f"- [{_fmt_time(h['created_at'])}] session {h['session_id']} "
+            lines.append(f"- [{fmt_timestamp(h['created_at'])}] session {h['session_id']} "
                          f"\"{h['session_title'] or 'Untitled'}\": {h['snippet']}")
         lines.append('')
         lines.append('Use get_session with a session id for the full transcript.')
@@ -116,8 +111,9 @@ class Server:
         lines = []
         for s in sessions:
             app = f" · {s['last_app']}" if s.get('last_app') else ''
+            app += ' · has summary' if s.get('summary') else ''
             lines.append(f"- id {s['id']}: \"{s['title'] or 'Untitled'}\" — "
-                         f"{_fmt_time(s['created_at'])} · {s['dictation_count']} dictations · "
+                         f"{fmt_timestamp(s['created_at'])} · {s['dictation_count']} dictations · "
                          f"{s['word_count']} words{app}")
         return '\n'.join(lines)
 
@@ -133,7 +129,7 @@ class Server:
         if not items:
             return 'No recent dictations.'
         return '\n'.join(
-            f"- [{_fmt_time(d['created_at'])}] (session {d['session_id']}) {d['text']}"
+            f"- [{fmt_timestamp(d['created_at'])}] (session {d['session_id']}) {d['text']}"
             for d in items)
 
     # ------------------------------------------------------------------ protocol

@@ -304,3 +304,23 @@ claude_code:
     value: true
     type: bool
     description: "Wrap file names like auth_guard.py in backticks when dictating into Claude Code."
+
+# Look and feel
+appearance:
+  theme:
+    value: dark
+    type: str
+    description: "Colour theme. 'system' follows the Windows light/dark setting."
+    options:
+      - dark
+      - light
+      - system
+  accent:
+    value: orange
+    type: str
+    description: "Accent colour for buttons, the record button and the waveform."
+    options:
+      - orange
+      - amber
+      - blue
+      - violet

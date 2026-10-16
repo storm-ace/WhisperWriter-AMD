@@ -29,8 +29,9 @@
 - **Remembers everything.** Every dictation is saved in a searchable local history, grouped
   into sessions.
 - **Built for Claude Code.** It detects Claude Code in your terminal, never sends the prompt
-  for you, wraps file names in backticks, and lets Claude Code read your dictation history
-  through an MCP server.
+  for you, wraps file names in backticks, sends whole sessions to Claude Code as context, and
+  lets Claude Code read your dictation history through an MCP server.
+- **Summaries.** A local LLM can boil a session down to decisions, tasks and open questions.
 - **Handles noisy rooms.** Strict voice detection and a hallucination filter keep keyboard
   clicks, fans and silence from becoming made-up text.
 - **Private.** Everything runs on your machine. No cloud, no account, no telemetry.
@@ -43,11 +44,12 @@
 4. [A tour of the app](#a-tour-of-the-app)
 5. [Using WhisperWriter with Claude Code](#using-whisperwriter-with-claude-code)
 6. [Sessions, search and history](#sessions-search-and-history)
-7. [Getting names and jargon right](#getting-names-and-jargon-right)
-8. [Settings reference](#settings-reference)
-9. [Troubleshooting](#troubleshooting)
-10. [For developers](#for-developers)
-11. [Credits and license](#credits-and-license)
+7. [Light or dark](#light-or-dark)
+8. [Getting names and jargon right](#getting-names-and-jargon-right)
+9. [Settings reference](#settings-reference)
+10. [Troubleshooting](#troubleshooting)
+11. [For developers](#for-developers)
+12. [Credits and license](#credits-and-license)
 
 ## How it works
 
@@ -175,8 +177,10 @@ On the first launch WhisperWriter opens on **Settings → Engine & GPU**:
    MinGW `bin` folder (`%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs...\mingw64\bin`).
 4. Click **Save & apply**.
 
-The status pill in the top bar changes to **Ready · whisper.cpp · Vulkan · large-v3-turbo**.
-That is the whole setup.
+The status pill in the top bar changes to **Ready · whisper.cpp · Vulkan · large-v3-turbo**,
+and the engine card shows the GPU the server picked (for example
+`AMD Radeon(TM) 8060S Graphics`). If the card says *no GPU found*, whisper.cpp was built
+without Vulkan. That is the whole setup.
 
 ### Step 5 — Start with Windows (optional)
 
@@ -213,7 +217,7 @@ Switch the mode in the record dock at the bottom of the main window:
 
 | Mode | How it behaves | Good for |
 | --- | --- | --- |
-| **Continuous** (default) | Records, types after each pause, and keeps listening. Press the hotkey again to stop. | Long dictation sessions |
+| **Continuous** (default) | Types after each pause and keeps listening. The microphone stays open while a sentence is transcribed, so nothing you say in between is lost. Press the hotkey or **■** to stop. | Long dictation sessions |
 | **Voice detect** | Records until you pause, types, then stops. | One prompt or message at a time |
 | **Toggle** | Press the hotkey once to start and once to stop. | Long thoughts with long pauses |
 | **Hold** | Records only while you hold the hotkey. | Push-to-talk |
@@ -241,16 +245,17 @@ Switch the mode in the record dock at the bottom of the main window:
 | 2 | **Hotkey** | Your current dictation shortcut. |
 | 3 | **Command palette** | `Ctrl+K`: jump to any session by searching its text, or run a command. |
 | 4 | **New session** | Starts a fresh session. One also starts automatically after 30 idle minutes. |
-| 5 | **Session list** | All sessions grouped by day. The dot marks the session new dictations go to. Right-click to rename, export or delete. |
+| 5 | **Session list** | All sessions grouped by day. The dot marks the session new dictations go to. Right-click for more actions. |
 | 6 | **Session title** | Double-click to rename. Below it: start time, number of dictations, words and audio length. |
-| 7 | **Copy for Claude Code** | Copies the whole session as a context block you can paste into a prompt. |
-| 8 | **Dictation** | Time, length, target window, transcription speed, and whether the LLM corrected it. Hover to copy or delete. |
-| 9 | **Record button** | Dictates into this session only, without typing anywhere. |
-| 10 | **Recording mode** | Continuous, Voice detect, Toggle or Hold. |
-| 11 | **Claude Code link** | Shows whether the MCP server is registered, so Claude Code can read your history. |
-| 12 | **Smart dictation** | Quick switches for Claude Code-aware typing, backticks, the Enter key and LLM correction. |
-| 13 | **Project vocabulary** | Names and terms Whisper should always spell right. |
-| 14 | **Engine stats** | Engine, model, average latency and speed over your recent dictations. |
+| 7 | **Send to Claude Code** | Pastes the whole session into your Claude Code window as context. **Copy as context** next to it puts the same block on the clipboard; **⋯** has rename, summarise, export and delete. |
+| 8 | **Summary** | The local-LLM summary of the session (decisions, tasks, open questions), once you have made one. |
+| 9 | **Dictation** | Time, length, target window, transcription speed, and whether the LLM corrected it. Hover to copy or delete. |
+| 10 | **Record button** | Dictates into this session only, without typing anywhere. Click again to stop. |
+| 11 | **Recording mode** | Continuous, Voice detect, Toggle or Hold. |
+| 12 | **Claude Code link** | Shows whether the MCP server is registered, so Claude Code can read your history. |
+| 13 | **Smart dictation** | Quick switches for Claude Code-aware typing, backticks, the Enter key and LLM correction. |
+| 14 | **Project vocabulary** | Names and terms Whisper should always spell right. |
+| 15 | **Engine stats** | Engine, the GPU the server is running on, model, average latency and speed. |
 
 ## Using WhisperWriter with Claude Code
 
@@ -263,8 +268,18 @@ editor running Claude Code, WhisperWriter:
 - **wraps file names in backticks**: *"open auth_guard.py"* becomes ``open `auth_guard.py` ``;
 - labels the dictation `Windows Terminal · Claude Code` in your history.
 
+Claude Code is recognised by its window title (`✳ <task>`, a spinner, or "Claude Code") while
+a Claude process is running. Other terminals are left alone.
+
 Typical flow: put your cursor in the Claude Code prompt, press the hotkey, explain the task,
 check the text, press Enter yourself.
+
+### Sending a whole session as context
+
+Click **Send to Claude Code** in the session header (or use the palette). WhisperWriter finds
+your most recent Claude Code window, brings it to the front and pastes the session as a
+`<dictation-session>` block, including its summary. It does **not** press Enter, so you can add
+a question first. If no Claude Code window is open, the block is put on your clipboard instead.
 
 ### Letting Claude Code read your history (MCP)
 
@@ -291,7 +306,7 @@ Claude Code now has these read-only tools:
 | --- | --- |
 | `search_dictations` | Full-text search over every dictation |
 | `list_sessions` | Recent sessions with id, title, time and size |
-| `get_session` | The full transcript of one session (default: the latest) |
+| `get_session` | The full transcript of one session, with its summary (default: the latest) |
 | `recent_dictations` | The latest dictations, optionally only the last N minutes |
 
 Things you can ask Claude Code:
@@ -316,10 +331,27 @@ works while the app is running.
 - Sessions split automatically after **30 idle minutes** (configurable), or when you click
   **New session**. To add to an older session, open it and click **Continue here**.
 - Search is full-text and prefix-based: `refr tok` finds *"refresh flow … bearer tokens"*.
-- Right-click a session to **copy it for Claude Code**, **copy it as Markdown**,
-  **export a `.md` file**, or **delete** it.
+- Right-click a session (or use **⋯**) to **rename** it, **summarise it with the local LLM**,
+  **send it to Claude Code**, **copy it as context or Markdown**, **export a `.md` file**, or
+  **delete** it.
+- **Summaries** need the local LLM from
+  [Getting names and jargon right](#getting-names-and-jargon-right). The summary is saved with
+  the session, shown above its dictations, and included when you send or export it.
 - The history lives in `%APPDATA%\WhisperWriter\sessions.db`, a single SQLite file. Back it up
-  by copying it. To stop saving history, turn off **Settings → Sessions → Enabled**.
+  by copying it. To stop saving history, turn off **Settings → Sessions & storage → Enabled**.
+
+## Light or dark
+
+<p align="center">
+  <img src="assets/screenshots/main-window-light.png" alt="WhisperWriter main window in the light theme" width="820">
+</p>
+
+**Settings → Appearance** switches between a dark and a light theme, or follows Windows
+(**System**), and offers four accent colours. The change applies as soon as you save.
+
+<p align="center">
+  <img src="assets/screenshots/settings-appearance.png" alt="Appearance settings with theme buttons Dark, Light, System and accent swatches Orange, Amber, Blue, Violet" width="820">
+</p>
 
 ## Getting names and jargon right
 
@@ -334,7 +366,7 @@ Three tools, from cheapest to most powerful:
    right the first time. There is no speed cost.
 2. **Word replacements.** Fixed `wrong = right` rules, one per line, for words the model keeps
    getting wrong (`cloud code = Claude Code`). There is no speed cost.
-3. **LLM correction** (off by default). Each dictation goes through a small local LLM
+3. **LLM correction and summaries** (off by default). Each dictation goes through a small local LLM
    ([llama.cpp](https://github.com/ggml-org/llama.cpp) on the same GPU), which fixes
    punctuation, capitals and clear mistakes without rewriting. It adds about 0.4–1 s. Build
    llama.cpp like whisper.cpp (`-DGGML_VULKAN=ON`), download a GGUF model, and set the paths
@@ -357,16 +389,19 @@ description.
 | **Engine & GPU** | Engine (whisper.cpp / faster-whisper), language, temperature, server binary, model file, DLL folder, host and port, CPU threads |
 | **Hotkeys & recording** | Dictate hotkey, dictate-without-Enter hotkey, recording mode, microphone, silence before stop, minimum speech, noise rejection (0–3), sample rate |
 | **Output & typing** | Insert method (`clipboard` is the most reliable), press Enter after dictating, trailing space and period, beep, hide the recorder pill, start in tray |
-| **Correction & vocabulary** | Project vocabulary, hallucination filter, word replacements, initial prompt, local LLM correction |
+| **Correction & vocabulary** | Project vocabulary, hallucination filter, word replacements, initial prompt, local LLM for correction and summaries |
 | **Claude Code** | Claude Code aware typing, never press Enter in Claude Code, backtick file names, MCP setup |
 | **Sessions & storage** | Save history, new session after N idle minutes, database location |
+| **Appearance** | Theme (dark, light, system) and accent colour |
 
 ## Troubleshooting
 
 | Problem | Solution |
 | --- | --- |
 | Status shows **whisper.cpp server not running** | Check **Server binary** and **Model file**. With a MinGW build, set **Extra DLL folder** to MinGW's `bin`. Then click **Restart engine**. |
-| The server log shows a CPU device, not `ggml_vulkan: ... AMD Radeon` | Update the AMD driver and use whisper.cpp v1.8.1 or newer. |
+| The engine card says **no GPU found** | whisper.cpp was built without Vulkan, or the driver is too old. Rebuild with `-DGGML_VULKAN=ON`, update the AMD driver, and use whisper.cpp v1.8.1 or newer. The full server log is in `%APPDATA%\WhisperWriter\whisper-server.log`. |
+| **Summary failed: no local LLM server is running** | Set up llama.cpp under **Settings → Correction & vocabulary** and enable LLM correction. |
+| **Send to Claude Code** only copies to the clipboard | No Claude Code window was found (its title must show Claude Code's `✳` marker or "Claude Code"). Paste with `Ctrl+V`. |
 | Words appear that you never said | Raise **Noise rejection** to 3, raise **Minimum speech**, and keep the **hallucination filter** on. |
 | Continuous mode cuts sentences in half | Raise **Silence before stop** (for example to 1500 ms). |
 | Characters go missing while typing | Set **Insert text with** to `clipboard`. |
@@ -381,14 +416,16 @@ Problems with this fork (AMD engine, UI, sessions, MCP) go to
 
 ```text
 run.py                    entry point (loads .env, starts src/main.py)
-src/main.py               app wiring: engine manager, hotkeys, recording flow, tray
-src/result_thread.py      microphone capture, voice detection, transcription worker
-src/transcription.py      whisper.cpp / faster-whisper engines and text clean-up
+src/main.py               app wiring: lifecycle, tray, sessions, settings, background tasks
+src/engine.py             starts whisper.cpp / faster-whisper (+ LLM server), detects the GPU
+src/recording.py          dictation flow: hotkey/button/pill, typing, Claude Code handling
+src/result_thread.py      microphone capture, speech segmentation, transcription worker
+src/transcription.py      engines, text clean-up, LLM correction and summaries
 src/sessions.py           SQLite + FTS5 session store (no Qt dependency)
 src/mcp_server.py         stdio MCP server for Claude Code (standard library only)
 src/claude_integration.py MCP registration helpers
-src/active_window.py      focused-window detection and Claude Code heuristics
-src/ui/                   PySide6 UI: theme, main window, settings, recorder pill, palette
+src/active_window.py      window detection, Claude Code heuristics, focusing a window
+src/ui/                   PySide6 UI: theme, main window, context panel, settings, pill, palette
 ```
 
 The settings page is generated from `src/config_schema.yaml`: add an option there and it
