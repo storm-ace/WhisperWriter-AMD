@@ -22,6 +22,10 @@ model_options:
       value: null
       type: str
       description: "A string used as an initial prompt to bias the transcription (e.g. domain-specific terms or names)."
+    vocabulary:
+      value: ""
+      type: str
+      description: "Project vocabulary: names, file names and jargon Whisper should spell right (comma or newline separated). Appended to the initial prompt."
 
   # Configuration options for the faster-whisper model
   local:
@@ -137,13 +141,21 @@ recording_options:
     type: int
     description: "The sample rate in Hz to use for recording."
   silence_duration:
-    value: 900
+    value: 1200
     type: int
     description: "The duration in milliseconds to wait for silence before stopping the recording."
   min_duration:
     value: 100
     type: int
     description: "The minimum duration in milliseconds for a recording to be processed. Recordings shorter than this will be discarded."
+  min_speech_duration:
+    value: 300
+    type: int
+    description: "Minimum amount of actual speech (ms) a recording must contain. Recordings with less speech (clicks, coughs, background noise) are discarded instead of transcribed."
+  vad_aggressiveness:
+    value: 3
+    type: int
+    description: "How strictly voice activity detection rejects non-speech: 0 = lenient, 3 = strict (best in noisy rooms). A frame must also be clearly louder than the measured background noise."
 
 # Post-processing options for the transcribed text
 post_processing:
@@ -180,6 +192,10 @@ post_processing:
     value: true
     type: bool
     description: "Only for input_method 'clipboard'. Set to true to restore the previous clipboard contents after pasting. Set to false to leave the dictated text on the clipboard, so you can manually Ctrl+V again if the automatic paste failed."
+  filter_hallucinations:
+    value: true
+    type: bool
+    description: "Drop phrases Whisper invents on silence or noise (\"Thank you.\", \"Thanks for watching!\", [BLANK_AUDIO]) when they make up the whole transcription."
   word_replacements:
     value: ""
     type: str
@@ -249,8 +265,42 @@ misc:
   hide_status_window:
     value: false
     type: bool
-    description: "Set to true to hide the status window during operation."
+    description: "Hide the floating recorder pill while dictating."
   noise_on_completion:
     value: false
     type: bool
     description: "Set to true to play a noise after the transcription has been typed out."
+  start_minimized:
+    value: false
+    type: bool
+    description: "Start in the system tray without opening the main window."
+
+# Dictation history (stored locally in SQLite)
+sessions:
+  enabled:
+    value: true
+    type: bool
+    description: "Save every dictation to the local session history."
+  new_session_after_minutes:
+    value: 30
+    type: int
+    description: "Start a new session automatically after this many idle minutes. 0 = never split automatically."
+  db_path:
+    value: null
+    type: str
+    description: "Location of the session database. Empty = %APPDATA%\\WhisperWriter\\sessions.db."
+
+# Smarter dictation into Claude Code and other terminals
+claude_code:
+  smart_terminal_mode:
+    value: true
+    type: bool
+    description: "Detect when the focused window is a terminal or editor running Claude Code and apply the options below."
+  suppress_enter:
+    value: true
+    type: bool
+    description: "Never press Enter after dictating into Claude Code, so you can review the prompt before sending it."
+  backtick_filenames:
+    value: true
+    type: bool
+    description: "Wrap file names like auth_guard.py in backticks when dictating into Claude Code."

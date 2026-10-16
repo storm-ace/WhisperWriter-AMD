@@ -72,7 +72,8 @@ this fork adds — see the *AMD GPU fork* section in [`README.md`](README.md) fo
 python run.py
 ```
 
-A settings window opens; closing it leaves the app running in the background. For the
+The main window opens on Settings the first time; closing the window leaves the app running
+in the tray. For the
 `faster-whisper` engine the first run downloads the model (~3 GB for `large-v3`) to
 `~/.cache/huggingface`.
 

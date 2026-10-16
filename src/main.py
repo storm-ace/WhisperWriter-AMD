@@ -1,281 +1,478 @@
 import os
 import sys
+import threading
 import time
-from audioplayer import AudioPlayer
-from pynput.keyboard import Controller
-from PyQt5.QtCore import QObject, QProcess, QSharedMemory
-from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction, QMessageBox
 
-from key_listener import KeyListener
-from result_thread import ResultThread
+# Run from the repository root so relative asset paths resolve, wherever we were launched.
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.chdir(ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QAction, QCursor, QGuiApplication
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+
+import claude_integration
+from active_window import Target, backtick_filenames, foreground_target
+from sessions import SessionStore, default_db_path
+from ui import theme
 from ui.main_window import MainWindow
-from ui.settings_window import SettingsWindow
-from ui.status_window import StatusWindow
-from transcription import create_local_model, resolve_engine
-from input_simulation import InputSimulator
+from ui.overlay import RecorderOverlay
 from utils import ConfigManager
-from whispercpp_server import WhisperCppServer
-from llamacpp_server import LlamaCppServer
+
+INSTANCE_NAME = 'WhisperWriter-AMD'
+
+
+class EngineManager(QObject):
+    """Starts the transcription engine (and optional LLM server) off the UI thread."""
+
+    statusChanged = Signal(str, str, str)   # state (starting|ready|error), title, detail
+
+    def __init__(self):
+        super().__init__()
+        self.engine = None
+        self.local_model = None
+        self.whispercpp_server = None
+        self.llama_server = None
+        self.state = 'starting'
+        self._generation = 0
+        self._lock = threading.Lock()
+
+    @property
+    def ready(self):
+        return self.state == 'ready'
+
+    def start(self):
+        self.stop()
+        self._generation += 1
+        gen = self._generation
+        self._emit(gen, 'starting', 'Starting engine…', '')
+        threading.Thread(target=self._start_blocking, args=(gen,), daemon=True).start()
+
+    def _emit(self, gen, state, title, detail):
+        if gen == self._generation:
+            self.state = state
+            self.statusChanged.emit(state, title, detail)
+
+    def _start_blocking(self, gen):
+        from transcription import create_local_model, resolve_engine
+        engine = resolve_engine()
+        self.engine = engine
+        opts = ConfigManager.get_config_section('model_options')
+        try:
+            if engine == 'whispercpp':
+                from whispercpp_server import WhisperCppServer
+                wc = opts.get('whispercpp', {})
+                model = os.path.basename(wc.get('model_path') or '').replace('ggml-', '').replace('.bin', '')
+                self._emit(gen, 'starting', f'Loading {model or "model"} on GPU…', '')
+                server = WhisperCppServer()
+                with self._lock:
+                    self.whispercpp_server = server
+                ok = server.start() if wc.get('auto_start', True) else server.is_available()
+                if gen != self._generation:
+                    return
+                if not ok:
+                    self._emit(gen, 'error', 'whisper.cpp server not running',
+                               'Check the server binary and ggml model path in Settings → Engine.')
+                    return
+                title = f'Ready · whisper.cpp · Vulkan · {model}' if model else 'Ready · whisper.cpp · Vulkan'
+                detail = f'whisper-server at {server.host}:{server.port}'
+            else:
+                local = opts.get('local', {})
+                self._emit(gen, 'starting', f'Loading {local.get("model")} on CPU…', '')
+                model = create_local_model()
+                if gen != self._generation:
+                    return
+                self.local_model = model
+                title = f'Ready · faster-whisper · {local.get("device", "cpu").upper()} · {local.get("model")}'
+                detail = ''
+
+            llm = ConfigManager.get_config_section('post_processing').get('llm_correction', {})
+            if llm.get('enabled') and llm.get('auto_start', True):
+                from llamacpp_server import LlamaCppServer
+                server = LlamaCppServer()
+                with self._lock:
+                    self.llama_server = server
+                if server.start():
+                    detail = (detail + ' · ' if detail else '') + 'LLM correction ready'
+                else:
+                    detail = (detail + ' · ' if detail else '') + 'LLM server failed (raw text is used)'
+            self._emit(gen, 'ready', title, detail)
+        except Exception as e:
+            self._emit(gen, 'error', 'Engine failed to start', str(e))
+
+    def stop(self):
+        with self._lock:
+            servers = [self.whispercpp_server, self.llama_server]
+            self.whispercpp_server = self.llama_server = None
+        for server in servers:
+            if server:
+                server.stop()
+        self.local_model = None
+
+
+class KeyBridge(QObject):
+    """Moves hotkey callbacks from the listener thread onto the Qt main thread."""
+    activated = Signal()
+    deactivated = Signal()
 
 
 class WhisperWriterApp(QObject):
     def __init__(self):
-        """
-        Initialize the application, opening settings window if no configuration file is found.
-        """
         super().__init__()
+        QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
         self.app = QApplication(sys.argv)
-        self.app.setWindowIcon(QIcon(os.path.join('assets', 'ww-logo.png')))
-        # This is a tray app: closing a window (e.g. the settings window) must NOT quit
-        # the app. Only the tray's Exit action / the restart-on-save quit explicitly.
-        self.app.setQuitOnLastWindowClosed(False)
+        self.app.setApplicationName('WhisperWriter')
+        self.app.setQuitOnLastWindowClosed(False)   # tray app: closing the window keeps it running
 
-        # Enforce a single running instance (avoids double hotkeys and server conflicts).
-        # Retry briefly: the in-app restart (after saving settings) launches the new
-        # instance while the old one is still releasing the lock — without the retry
-        # the new instance would be refused and the app would appear to "quit on save".
-        self._single_instance = QSharedMemory('WhisperWriter-AMD-single-instance')
-        acquired = self._single_instance.create(1)
-        if not acquired:
-            for _ in range(12):  # up to ~3.6s
-                time.sleep(0.3)
-                if self._single_instance.create(1):
-                    acquired = True
-                    break
-        if not acquired:
-            # Already running. Exit cleanly without a modal dialog (which would hang
-            # invisibly when launched hidden via pythonw).
-            print('WhisperWriter is already running; exiting this duplicate instance.')
+        if not self._claim_single_instance():
             sys.exit(0)
 
         ConfigManager.initialize()
+        first_run = not ConfigManager.config_file_exists()
+        theme.apply_app_theme(self.app)
+        self.app.setWindowIcon(theme.app_icon())
 
-        self.settings_window = SettingsWindow()
-        self.settings_window.settings_closed.connect(self.on_settings_closed)
-        self.settings_window.settings_saved.connect(self.restart_app)
-
-        if ConfigManager.config_file_exists():
-            self.initialize_components()
-        else:
-            print('No valid configuration file found. Opening settings window...')
-            self.settings_window.show()
-
-    def initialize_components(self):
-        """
-        Initialize the components of the application.
-        """
-        self.input_simulator = InputSimulator()
-
-        self.key_listener = KeyListener()
-        self.key_listener.add_callback("on_activate", self.on_activation)
-        self.key_listener.add_callback("on_deactivate", self.on_deactivation)
-
-        # Pick the transcription engine. For 'whispercpp' a local GPU server (Vulkan)
-        # is launched and no in-process faster-whisper model is needed.
-        self.engine = resolve_engine()
-        self.whispercpp_server = None
-        if self.engine == 'whispercpp':
-            self.local_model = None
-            wc_options = ConfigManager.get_config_section('model_options').get('whispercpp', {})
-            if wc_options.get('auto_start', True):
-                self.whispercpp_server = WhisperCppServer()
-                self.whispercpp_server.start()
-        else:  # faster-whisper
-            self.local_model = create_local_model()
-
-        # Optional local-LLM transcription-correction server (GPU via Vulkan, default off).
-        self.llama_server = None
-        llm = ConfigManager.get_config_section('post_processing').get('llm_correction', {})
-        if llm.get('enabled') and llm.get('auto_start', True):
-            self.llama_server = LlamaCppServer()
-            self.llama_server.start()
+        self.store = SessionStore(ConfigManager.get_config_value('sessions', 'db_path') or None)
+        self.active_session_id = self.store.resolve_active_session(self._gap_minutes())
+        self.store.prune_empty_sessions(keep_id=self.active_session_id)
 
         self.result_thread = None
+        self.source = 'hotkey'
+        self.target = Target()
+        self.suppress_enter_current = False
 
-        self.main_window = MainWindow()
-        self.main_window.openSettings.connect(self.settings_window.show)
-        self.main_window.startListening.connect(self.key_listener.start)
+        self.engine = EngineManager()
+        self.engine.statusChanged.connect(self.on_engine_status)
 
-        if not ConfigManager.get_config_value('misc', 'hide_status_window'):
-            self.status_window = StatusWindow()
+        self.main_window = MainWindow(self.store, claude_integration.is_registered)
+        self.main_window.recordClicked.connect(self.on_record_clicked)
+        self.main_window.newSessionRequested.connect(self.new_session)
+        self.main_window.continueSessionRequested.connect(self.set_active_session)
+        self.main_window.settingsApplied.connect(self.apply_settings)
+        self.main_window.mcpSetupRequested.connect(self.setup_mcp)
+        self.main_window.settings_page.restartEngineRequested.connect(self.engine.start)
+        self.main_window.set_active_session(self.active_session_id)
+
+        self.overlay = RecorderOverlay()
+        self.overlay.stopRequested.connect(self.stop_recording)
+        self.overlay.cancelRequested.connect(self.cancel_recording)
+
+        from input_simulation import InputSimulator
+        from key_listener import KeyListener
+        self.input_simulator = InputSimulator()
+        self.bridge = KeyBridge()
+        self.bridge.activated.connect(self.on_activation, Qt.ConnectionType.QueuedConnection)
+        self.bridge.deactivated.connect(self.on_deactivation, Qt.ConnectionType.QueuedConnection)
+        self.key_listener = KeyListener()
+        self.key_listener.add_callback('on_activate', self.bridge.activated.emit)
+        self.key_listener.add_callback('on_deactivate', self.bridge.deactivated.emit)
+        self.key_listener.start()
 
         self.create_tray_icon()
-        self.main_window.show()
+        self.engine.start()
 
-    def _engine_label(self):
-        """Human-readable name of the active transcription engine."""
-        return {
-            'whispercpp': 'whisper.cpp GPU (Vulkan)',
-            'faster-whisper': 'faster-whisper (CPU)',
-        }.get(self.engine, self.engine)
+        if first_run:
+            self.main_window.show()
+            self.main_window.show_settings('engine')
+            self.main_window.toast.show_message('Welcome! Pick your engine and hit Save & apply.', 6000)
+        elif not ConfigManager.get_config_value('misc', 'start_minimized'):
+            self.main_window.show()
 
-    def _status_text(self):
-        """Status line for the tray tooltip and menu (refreshed when opened)."""
-        parts = [f'WhisperWriter running - {self._engine_label()}']
-        if self.engine == 'whispercpp':
-            available = self.whispercpp_server.is_available() if self.whispercpp_server \
-                else WhisperCppServer().is_available()
-            parts.append('GPU server: ' + ('running' if available else 'unreachable'))
-        return '  |  '.join(parts)
+    # ================================================================ lifecycle
+    def _claim_single_instance(self):
+        """Hand off to an already running instance (it shows its window) or become it."""
+        socket = QLocalSocket()
+        socket.connectToServer(INSTANCE_NAME)
+        if socket.waitForConnected(300):
+            socket.write(b'show')
+            socket.flush()
+            socket.waitForBytesWritten(300)
+            print('WhisperWriter is already running; showing its window.')
+            return False
+        QLocalServer.removeServer(INSTANCE_NAME)
+        self.instance_server = QLocalServer(self)
+        self.instance_server.newConnection.connect(self._on_second_instance)
+        self.instance_server.listen(INSTANCE_NAME)
+        return True
 
-    def _update_tray_status(self):
-        text = self._status_text()
-        self.status_action.setText(text)
-        self.tray_icon.setToolTip(text)
+    def _on_second_instance(self):
+        conn = self.instance_server.nextPendingConnection()
+        if conn:
+            conn.disconnectFromServer()
+        if hasattr(self, 'main_window'):
+            self.main_window.bring_to_front()
 
+    def cleanup(self):
+        if getattr(self, 'result_thread', None) and self.result_thread.isRunning():
+            self.result_thread.stop()
+        if getattr(self, 'key_listener', None):
+            self.key_listener.stop()
+        if getattr(self, 'input_simulator', None):
+            self.input_simulator.cleanup()
+        if getattr(self, 'engine', None):
+            self.engine.stop()
+        if getattr(self, 'store', None):
+            self.store.close()
+
+    def exit_app(self):
+        self.tray_icon.hide()
+        self.cleanup()
+        QApplication.quit()
+
+    def run(self):
+        sys.exit(self.app.exec())
+
+    # ================================================================ tray
     def create_tray_icon(self):
-        """
-        Create the system tray icon and its context menu.
-        """
-        self.tray_icon = QSystemTrayIcon(QIcon(os.path.join('assets', 'ww-logo.png')), self.app)
-
-        tray_menu = QMenu()
-
-        # Non-clickable status line at the top so you can see it is running.
-        self.status_action = QAction('', self.app)
-        self.status_action.setEnabled(False)
-        tray_menu.addAction(self.status_action)
-        tray_menu.addSeparator()
-
-        show_action = QAction('WhisperWriter Main Menu', self.app)
-        show_action.triggered.connect(self.main_window.show)
-        tray_menu.addAction(show_action)
-
-        settings_action = QAction('Open Settings', self.app)
-        settings_action.triggered.connect(self.settings_window.show)
-        tray_menu.addAction(settings_action)
-
-        tray_menu.addSeparator()
-        exit_action = QAction('Exit (also stops the GPU server)', self.app)
-        exit_action.triggered.connect(self.exit_app)
-        tray_menu.addAction(exit_action)
-
-        # Refresh the status each time the menu opens.
-        tray_menu.aboutToShow.connect(self._update_tray_status)
-        self._update_tray_status()
-
-        self.tray_icon.setContextMenu(tray_menu)
-        # Double-clicking the tray icon opens the settings window.
+        self.tray_icon = QSystemTrayIcon(theme.app_icon(), self.app)
+        menu = QMenu()
+        self.tray_status = QAction('Starting…', self.app)
+        self.tray_status.setEnabled(False)
+        menu.addAction(self.tray_status)
+        menu.addSeparator()
+        menu.addAction('Open WhisperWriter', self.main_window.bring_to_front)
+        menu.addAction('New session', self.new_session)
+        menu.addAction('Search…', self.main_window.open_palette)
+        menu.addAction('Settings', self.main_window.show_settings)
+        menu.addSeparator()
+        menu.addAction('Quit (stops GPU servers)', self.exit_app)
+        self.tray_menu = menu
+        self.tray_icon.setContextMenu(menu)
         self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.setToolTip('WhisperWriter')
         self.tray_icon.show()
 
     def _on_tray_activated(self, reason):
-        """Open settings on a double-click of the tray icon."""
-        if reason == QSystemTrayIcon.DoubleClick:
-            self.settings_window.show()
-            self.settings_window.raise_()
-            self.settings_window.activateWindow()
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            if self.main_window.isVisible() and self.main_window.isActiveWindow():
+                self.main_window.hide()
+            else:
+                self.main_window.bring_to_front()
 
-    def cleanup(self):
-        if self.key_listener:
+    # ================================================================ engine
+    def on_engine_status(self, state, title, detail):
+        self.main_window.set_engine_status(state, title, None)
+        self.main_window.settings_page.set_engine_info(state, title, detail)
+        self.tray_status.setText(title)
+        self.tray_icon.setToolTip(f'WhisperWriter — {title}')
+        if state == 'error':
+            self.overlay.show_message(detail or title, head=title)
+
+    def apply_settings(self, old):
+        """Apply a saved config in-process, restarting only what changed."""
+        new = ConfigManager.snapshot()
+
+        def changed(*keys):
+            a, b = old, new
+            for k in keys:
+                a = a.get(k, {}) if isinstance(a, dict) else None
+                b = b.get(k, {}) if isinstance(b, dict) else None
+            return a != b
+
+        llm_server_keys = ('enabled', 'binary_path', 'model_path', 'lib_path', 'host', 'port',
+                           'n_gpu_layers', 'context_size', 'n_threads', 'auto_start')
+        if (changed('model_options', 'engine') or changed('model_options', 'local')
+                or changed('model_options', 'whispercpp')
+                or any(changed('post_processing', 'llm_correction', k) for k in llm_server_keys)):
+            self.engine.start()
+
+        if (changed('recording_options', 'activation_key')
+                or changed('recording_options', 'activation_key_no_enter')):
+            self.key_listener.update_activation_keys()
+        if changed('recording_options', 'input_backend'):
             self.key_listener.stop()
-        if self.input_simulator:
+            self.key_listener.update_backend()
+            self.key_listener.start()
+
+        if changed('post_processing', 'input_method'):
+            from input_simulation import InputSimulator
             self.input_simulator.cleanup()
-        if getattr(self, 'whispercpp_server', None):
-            self.whispercpp_server.stop()
-        if getattr(self, 'llama_server', None):
-            self.llama_server.stop()
+            self.input_simulator = InputSimulator()
 
-    def exit_app(self):
-        """
-        Exit the application.
-        """
-        self.cleanup()
-        QApplication.quit()
+        if changed('sessions', 'db_path'):
+            self.store.close()
+            self.store = SessionStore(new['sessions'].get('db_path') or None)
+            self.main_window.store = self.store
+            self.active_session_id = self.store.resolve_active_session(self._gap_minutes())
+            self.main_window.set_active_session(self.active_session_id)
 
-    def restart_app(self):
-        """Restart the application to apply the new settings."""
-        self.cleanup()
-        # Launch the replacement, then quit. The single-instance lock is freed only when
-        # this process exits (QSharedMemory.detach does not release it on Windows), so the
-        # new instance retries acquiring the lock until then (see __init__).
-        QProcess.startDetached(sys.executable, sys.argv)
-        QApplication.quit()
+        self.main_window.refresh_config_views()
+        self.main_window.settings_page.refresh_mcp()
 
-    def on_settings_closed(self):
-        """
-        If settings is closed without saving on first run, initialize the components with default values.
-        """
-        if not os.path.exists(os.path.join('src', 'config.yaml')):
-            QMessageBox.information(
-                self.settings_window,
-                'Using Default Values',
-                'Settings closed without saving. Default values are being used.'
-            )
-            self.initialize_components()
+    def setup_mcp(self):
+        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        try:
+            ok, message = claude_integration.register(
+                ConfigManager.get_config_value('sessions', 'db_path'))
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.main_window.settings_page.refresh_mcp(message)
+        self.main_window.refresh_mcp_status()
+        self.main_window.toast.show_message(message if ok else 'Could not register — see Settings → Claude Code')
 
+    # ================================================================ sessions
+    def _gap_minutes(self):
+        return ConfigManager.get_config_value('sessions', 'new_session_after_minutes') or 0
+
+    def set_active_session(self, session_id):
+        self.active_session_id = session_id
+        self.store.touch_session(session_id)
+        self.main_window.set_active_session(session_id)
+
+    def new_session(self):
+        current = self.store.get_session(self.active_session_id) if self.active_session_id else None
+        if current and current['dictation_count'] == 0:
+            self.main_window.set_active_session(current['id'])
+        else:
+            self.active_session_id = self.store.create_session()
+            self.main_window.set_active_session(self.active_session_id)
+        self.main_window.bring_to_front()
+        self.main_window.show_sessions()
+
+    def _session_for_new_dictation(self):
+        session = self.store.get_session(self.active_session_id) if self.active_session_id else None
+        gap = self._gap_minutes()
+        if (session is None or (gap and session['dictation_count'] > 0
+                                and time.time() - session['updated_at'] > gap * 60)):
+            self.active_session_id = self.store.create_session()
+            self.main_window.active_session_id = self.active_session_id
+            self.main_window.show_session(self.active_session_id)
+        return self.active_session_id
+
+    # ================================================================ recording
     def on_activation(self):
-        """
-        Called when the activation key combination is pressed.
-        """
-        # Remember whether the triggering key was the secondary ("no Enter") key,
-        # captured at activation time so the result handler can honor it later.
         self.suppress_enter_current = self.key_listener.suppress_enter
-
         if self.result_thread and self.result_thread.isRunning():
-            recording_mode = ConfigManager.get_config_value('recording_options', 'recording_mode')
-            if recording_mode == 'press_to_toggle':
+            mode = ConfigManager.get_config_value('recording_options', 'recording_mode')
+            if mode == 'press_to_toggle':
                 self.result_thread.stop_recording()
-            elif recording_mode == 'continuous':
+            elif mode == 'continuous':
                 self.stop_result_thread()
             return
-
-        self.start_result_thread()
+        self.start_result_thread('hotkey')
 
     def on_deactivation(self):
-        """
-        Called when the activation key combination is released.
-        """
         if ConfigManager.get_config_value('recording_options', 'recording_mode') == 'hold_to_record':
             if self.result_thread and self.result_thread.isRunning():
                 self.result_thread.stop_recording()
 
-    def start_result_thread(self):
-        """
-        Start the result thread to record audio and transcribe it.
-        """
+    def on_record_clicked(self):
+        if self.result_thread and self.result_thread.isRunning():
+            if self.result_thread.is_recording:
+                self.result_thread.stop_recording()
+            return
+        self.suppress_enter_current = True
+        self.start_result_thread('button')
+
+    def start_result_thread(self, source):
         if self.result_thread and self.result_thread.isRunning():
             return
-
-        self.result_thread = ResultThread(self.local_model)
-        if not ConfigManager.get_config_value('misc', 'hide_status_window'):
-            self.result_thread.statusSignal.connect(self.status_window.updateStatus)
-            self.status_window.closeSignal.connect(self.stop_result_thread)
-        self.result_thread.resultSignal.connect(self.on_transcription_complete)
+        if not self.engine.ready:
+            msg = ('The engine is still starting — try again in a moment.'
+                   if self.engine.state == 'starting' else
+                   'The engine is not running. Open Settings → Engine to fix it.')
+            self.overlay.show_message(msg, head='Not ready')
+            return
+        from result_thread import ResultThread
+        self.source = source
+        # Hotkey: type into whatever window had focus. Record button: our own window has
+        # focus, so the dictation only goes into the session.
+        self.target = foreground_target() if source == 'hotkey' else Target()
+        self.result_thread = ResultThread(self.engine.local_model)
+        self.result_thread.statusSignal.connect(self.on_status)
+        self.result_thread.levelSignal.connect(self.overlay.push_level)
+        self.result_thread.levelSignal.connect(self.main_window.push_level)
+        self.result_thread.resultSignal.connect(self.on_result)
         self.result_thread.start()
 
+    def stop_recording(self):
+        if self.result_thread and self.result_thread.isRunning():
+            self.result_thread.stop_recording()
+
+    def cancel_recording(self):
+        self.stop_result_thread()
+        self.overlay.hide()
+
     def stop_result_thread(self):
-        """
-        Stop the result thread.
-        """
         if self.result_thread and self.result_thread.isRunning():
             self.result_thread.stop()
 
-    def on_transcription_complete(self, result):
-        """
-        When the transcription is complete, type the result and start listening for the activation key again.
-        """
-        self.input_simulator.typewrite(result)
+    def _overlay_enabled(self):
+        return not ConfigManager.get_config_value('misc', 'hide_status_window')
 
-        press_enter = (ConfigManager.get_config_value('post_processing', 'press_enter')
-                       and not getattr(self, 'suppress_enter_current', False))
-        if press_enter:
-            self.input_simulator.press_enter()
+    def on_status(self, status):
+        self.main_window.set_recording_state(status)
+        if not self._overlay_enabled():
+            return
+        if status == 'recording':
+            self.overlay.show_recording(self.target.label if self.source == 'hotkey' else 'session')
+        elif status == 'transcribing':
+            self.overlay.show_transcribing('GPU · Vulkan' if self.engine.engine == 'whispercpp' else 'CPU')
+        elif status == 'idle' and not (self.result_thread and self.result_thread.isRunning()):
+            self.overlay.hide()
+
+    def on_result(self, result):
+        text = (result.get('text') or '')
+        if result.get('error'):
+            # No auto-restart in continuous mode: a broken engine would loop forever.
+            self.overlay.show_message(result['error'], head='Transcription failed')
+            return
+        if not text.strip():
+            # Nothing usable (noise or a filtered hallucination): keep listening quietly.
+            continuous = ConfigManager.get_config_value('recording_options', 'recording_mode') == 'continuous'
+            if not continuous:
+                self.overlay.hide()
+            self._after_result()
+            return
+
+        target = self.target
+        claude_mode = (ConfigManager.get_config_value('claude_code', 'smart_terminal_mode')
+                       and target.is_claude_code)
+        if claude_mode and ConfigManager.get_config_value('claude_code', 'backtick_filenames'):
+            text = backtick_filenames(text)
+
+        typed = self.source == 'hotkey' and target.exe and not target.is_own_process
+        if typed:
+            self.input_simulator.typewrite(text)
+            press_enter = (ConfigManager.get_config_value('post_processing', 'press_enter')
+                           and not self.suppress_enter_current
+                           and not (claude_mode and ConfigManager.get_config_value('claude_code', 'suppress_enter')))
+            if press_enter:
+                self.input_simulator.press_enter()
+
+        if ConfigManager.get_config_value('sessions', 'enabled'):
+            session_id = self._session_for_new_dictation()
+            dictation_id = self.store.add_dictation(
+                session_id, text, raw_text=result.get('raw'), duration_s=result.get('duration_s'),
+                latency_s=result.get('latency_s'),
+                target_app=target.label if typed else None, target_title=target.title if typed else None,
+                engine=self.engine.engine, corrected=result.get('corrected'))
+            dictation = next((d for d in self.store.dictations(session_id, limit=1)
+                              if d['id'] == dictation_id), None)
+            if dictation:
+                self.main_window.add_dictation(session_id, dictation)
+        if typed:
+            self.main_window.set_last_target(target.label)
+
+        if self._overlay_enabled():
+            latency = result.get('latency_s') or 0
+            head = f'Typed into {target.app} · {latency:.1f} s' if typed else f'Saved to session · {latency:.1f} s'
+            self.overlay.show_result(text, head, 'Ctrl Z to undo' if typed else '')
 
         if ConfigManager.get_config_value('misc', 'noise_on_completion'):
-            AudioPlayer(os.path.join('assets', 'beep.wav')).play(block=True)
+            from audioplayer import AudioPlayer
+            AudioPlayer(os.path.join('assets', 'beep.wav')).play(block=False)
+        self._after_result()
 
+    def _after_result(self):
         if ConfigManager.get_config_value('recording_options', 'recording_mode') == 'continuous':
-            self.start_result_thread()
-        else:
-            self.key_listener.start()
-
-    def run(self):
-        """
-        Start the application.
-        """
-        sys.exit(self.app.exec_())
+            # Let the finished thread wind down before starting the next recording.
+            if self.result_thread:
+                self.result_thread.wait(2000)
+            self.start_result_thread(self.source)
 
 
 if __name__ == '__main__':

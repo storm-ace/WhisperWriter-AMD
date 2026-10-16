@@ -4,7 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [2.0.0-amd] - 2026-10-16
+### Added
+- Completely new PySide6 (Qt 6) interface: one main window with session history, live
+  record dock, Claude Code context panel, Ctrl+K command palette and in-window settings.
+- Session history: every dictation is stored in a local SQLite database with full-text
+  search (FTS5); sessions split automatically after an idle gap or manually.
+- MCP server (`src/mcp_server.py`) so Claude Code can search and read past dictations.
+- Claude Code aware typing: detects Claude Code in the focused terminal, never presses
+  Enter there and wraps file names in backticks.
+- Project vocabulary, fed to Whisper as part of the initial prompt.
+- Floating recorder pill with live waveform that never steals focus.
+
+### Changed
+- Settings apply in-process; only the engine/servers whose settings changed restart.
+- Engine start-up runs in the background, so the window opens instantly.
+- `faster-whisper` is imported lazily (not loaded at all for the whisper.cpp engine).
+- A second launch now brings the running instance to the front instead of exiting silently.
+
+### Fixed
+- The hotkey listener was started again after every transcription, stacking listeners.
+
+### Removed
+- PyQt5 UI (old main, settings and status windows) and the restart-on-save flow.
+
+## [Unreleased — upstream]
 ### Added
 - New settings window to configure WhisperWriter.
 - New main window to either start the keyboard listener or open the settings window.

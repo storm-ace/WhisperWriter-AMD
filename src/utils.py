@@ -1,5 +1,11 @@
-import yaml
+import copy
 import os
+
+import yaml
+
+# Absolute so the app works no matter which directory it is launched from.
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
+
 
 class ConfigManager:
     _instance = None
@@ -94,7 +100,7 @@ class ConfigManager:
             config[category] = extract_value(settings)
         return config
 
-    def load_user_config(self, config_path=os.path.join('src', 'config.yaml')):
+    def load_user_config(self, config_path=CONFIG_PATH):
         """Load user configuration and merge with default config."""
         def deep_update(source, overrides):
             for key, value in overrides.items():
@@ -107,17 +113,24 @@ class ConfigManager:
             try:
                 with open(config_path, 'r', encoding='utf-8') as file:
                     user_config = yaml.safe_load(file)
-                    deep_update(self.config, user_config)
+                    deep_update(self.config, user_config or {})
             except yaml.YAMLError:
                 print("Error in configuration file. Using default configuration.")
 
     @classmethod
-    def save_config(cls, config_path=os.path.join('src', 'config.yaml')):
+    def save_config(cls, config_path=CONFIG_PATH):
         """Save the current configuration to a YAML file."""
         if cls._instance is None:
             raise RuntimeError("ConfigManager not initialized")
         with open(config_path, 'w', encoding='utf-8') as file:
             yaml.dump(cls._instance.config, file, default_flow_style=False, allow_unicode=True)
+
+    @classmethod
+    def snapshot(cls):
+        """Deep copy of the current configuration (to diff against after a change)."""
+        if cls._instance is None:
+            raise RuntimeError("ConfigManager not initialized")
+        return copy.deepcopy(cls._instance.config)
 
     @classmethod
     def reload_config(cls):
@@ -132,8 +145,7 @@ class ConfigManager:
     @classmethod
     def config_file_exists(cls):
         """Check if a valid config file exists."""
-        config_path = os.path.join('src', 'config.yaml')
-        return os.path.isfile(config_path)
+        return os.path.isfile(CONFIG_PATH)
 
     @classmethod
     def console_print(cls, message):

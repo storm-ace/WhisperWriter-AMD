@@ -1,10 +1,22 @@
 import io
+import re
 import numpy as np
 import requests
 import soundfile as sf
-from faster_whisper import WhisperModel
 
 from utils import ConfigManager
+
+
+def build_initial_prompt(common):
+    """Initial prompt plus the project vocabulary, so names and file names land right."""
+    parts = []
+    if common.get('initial_prompt'):
+        parts.append(common['initial_prompt'].strip())
+    vocab = [w.strip() for w in (common.get('vocabulary') or '').replace('\n', ',').split(',')]
+    vocab = [w for w in vocab if w]
+    if vocab:
+        parts.append(', '.join(vocab) + '.')
+    return ' '.join(parts) or None
 
 
 def resolve_engine():
@@ -19,6 +31,10 @@ def create_local_model():
     """
     Create a local model using the faster-whisper library.
     """
+    # Imported lazily: faster-whisper pulls in ctranslate2/onnxruntime, which costs seconds
+    # of startup and is not needed at all for the whisper.cpp engine.
+    from faster_whisper import WhisperModel
+
     ConfigManager.console_print('Creating local model...')
     local_model_options = ConfigManager.get_config_section('model_options')['local']
     compute_type = local_model_options['compute_type']
@@ -65,7 +81,7 @@ def transcribe_local(audio_data, local_model=None):
 
     response = local_model.transcribe(audio=audio_data_float,
                                       language=model_options['common']['language'],
-                                      initial_prompt=model_options['common']['initial_prompt'],
+                                      initial_prompt=build_initial_prompt(model_options['common']),
                                       condition_on_previous_text=model_options['local']['condition_on_previous_text'],
                                       temperature=model_options['common']['temperature'],
                                       vad_filter=model_options['local']['vad_filter'],)
@@ -92,11 +108,15 @@ def transcribe_whispercpp(audio_data):
     data = {
         'temperature': str(model_options['common']['temperature']),
         'response_format': 'json',
+        # Fewer invented words on noise: suppress non-speech tokens and drop segments
+        # the model itself rates as probably silent.
+        'suppress_nst': 'true',
+        'no_speech_thold': '0.6',
     }
     language = model_options['common'].get('language')
     if language:
         data['language'] = language
-    initial_prompt = model_options['common'].get('initial_prompt')
+    initial_prompt = build_initial_prompt(model_options['common'])
     if initial_prompt:
         data['prompt'] = initial_prompt
 
@@ -155,7 +175,6 @@ def apply_word_replacements(text, rules_text):
     One rule per line, in the form 'wrong = right' or 'wrong -> right'. Used to fix
     words the model consistently mishears (names, brands, jargon).
     """
-    import re
     for line in (rules_text or '').splitlines():
         line = line.strip()
         if not line:
@@ -171,17 +190,53 @@ def apply_word_replacements(text, rules_text):
     return text
 
 
-def post_process_transcription(transcription):
+# Whisper "hears" these in silence or noise (YouTube-subtitle training data). A transcript
+# that consists of nothing but one of them is dropped.
+HALLUCINATIONS = {
+    'thank you', 'thank you very much', 'thanks', 'thanks for watching',
+    'thank you for watching', 'thanks for listening', 'please subscribe',
+    'subscribe to my channel', 'like and subscribe', 'you', 'bye', 'bye bye', 'the end',
+    'so', 'uh', 'um', 'hmm', 'oh', 'okay bye', 'see you next time',
+    'dank je wel', 'dankjewel', 'bedankt', 'bedankt voor het kijken', 'tot de volgende keer',
+    'ondertiteling door de amaraorg gemeenschap', 'ondertitels ingediend door de amaraorg gemeenschap',
+    'ondertiteld door de amaraorg gemeenschap', 'amaraorg', 'tv gelderland 2021',
+    'subtitles by the amaraorg community',
+}
+
+_NON_SPEECH_TAGS = re.compile(r'\[(?:blank_audio|silence|music|noise|applause|laughter|inaudible)[^\]]*\]'
+                              r'|\((?:silence|music|noise|applause|laughter|inaudible)[^)]*\)'
+                              r'|[♪♫]+', re.IGNORECASE)
+
+
+def remove_hallucinations(text):
+    """Strip non-speech tags ([BLANK_AUDIO], (music)) and drop known silence phrases."""
+    text = _NON_SPEECH_TAGS.sub('', text).strip()
+    key = re.sub(r'[^\w\s]', '', text.lower())
+    key = re.sub(r'\s+', ' ', key).strip()
+    if not key or key in HALLUCINATIONS:
+        return ''
+    return text
+
+
+def post_process_transcription(transcription, info=None):
     """
-    Apply post-processing to the transcription.
+    Apply post-processing to the transcription. When `info` is a dict, it receives
+    'corrected' = True if the LLM changed the text.
     """
     transcription = transcription.strip()
     post_processing = ConfigManager.get_config_section('post_processing')
+    if post_processing.get('filter_hallucinations', True):
+        transcription = remove_hallucinations(transcription)
+        if not transcription:
+            return ''
     transcription = apply_word_replacements(transcription, post_processing.get('word_replacements'))
 
     llm = post_processing.get('llm_correction') or {}
     if llm.get('enabled') and transcription:
-        transcription = correct_with_llm(transcription, llm)
+        corrected = correct_with_llm(transcription, llm)
+        if info is not None:
+            info['corrected'] = corrected != transcription
+        transcription = corrected
 
     if post_processing['remove_trailing_period'] and transcription.endswith('.'):
         transcription = transcription[:-1]
@@ -192,18 +247,24 @@ def post_process_transcription(transcription):
 
     return transcription
 
-def transcribe(audio_data, local_model=None):
+def transcribe_detailed(audio_data, local_model=None):
     """
-    Transcribe audio using the configured engine (whisper.cpp GPU server or
-    in-process faster-whisper).
+    Transcribe audio with the configured engine and return a dict:
+    text (post-processed), raw (engine output), corrected (LLM changed it).
     """
     if audio_data is None:
-        return ''
+        return {'text': '', 'raw': '', 'corrected': False}
 
     if resolve_engine() == 'whispercpp':
-        transcription = transcribe_whispercpp(audio_data)
+        raw = transcribe_whispercpp(audio_data)
     else:  # 'faster-whisper'
-        transcription = transcribe_local(audio_data, local_model)
+        raw = transcribe_local(audio_data, local_model)
 
-    return post_process_transcription(transcription)
+    info = {'corrected': False}
+    text = post_process_transcription(raw, info)
+    return {'text': text, 'raw': raw.strip(), 'corrected': info['corrected']}
+
+def transcribe(audio_data, local_model=None):
+    """Transcribe audio and return only the post-processed text."""
+    return transcribe_detailed(audio_data, local_model)['text']
 
