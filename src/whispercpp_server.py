@@ -19,6 +19,7 @@ import time
 
 import glob
 
+from model_setup import models_dirs
 from sessions import app_data_dir
 from utils import APP_ROOT, ConfigManager
 
@@ -26,15 +27,15 @@ _VULKAN_DEVICE = re.compile(r'ggml_vulkan: 0 = (.+?)(?: \(|\s*\|)')
 _BACKEND = re.compile(r'using (\w+?)\d* backend')
 
 
-# The release build ships whisper-server here; ggml models dropped into models/ are found.
+# The release build ships whisper-server here; ggml models dropped into models/ (or
+# downloaded there on first start) are found.
 BUNDLED_SERVER = os.path.join(APP_ROOT, 'whisper.cpp', 'whisper-server.exe')
-MODELS_DIR = os.path.join(APP_ROOT, 'models')
 _MODEL_PREFERENCE = ('large-v3-turbo', 'large-v3', 'medium', 'small', 'base')
 
 
 def bundled_model():
-    """Best ggml model found in the models/ folder, or None."""
-    found = glob.glob(os.path.join(MODELS_DIR, 'ggml-*.bin'))
+    """Best ggml model found in the models folders, or None."""
+    found = [p for d in models_dirs() for p in glob.glob(os.path.join(d, 'ggml-*.bin'))]
     for name in _MODEL_PREFERENCE:
         for path in found:
             if os.path.basename(path) == f'ggml-{name}.bin':
