@@ -10,6 +10,7 @@ import sounddevice as sd
 import webrtcvad
 from PySide6.QtCore import QThread, Signal
 
+import audio_devices
 from transcription import TranscriptionResult, transcribe_detailed
 from utils import ConfigManager
 
@@ -218,7 +219,7 @@ class ResultThread(QThread):
             data_ready.set()
 
         with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype='int16',
-                            blocksize=frame_size, device=opts.get('sound_device'),
+                            blocksize=frame_size, device=audio_devices.resolve(opts.get('sound_device')),
                             callback=audio_callback):
             while self.is_recording:
                 data_ready.wait(0.5)

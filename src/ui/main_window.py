@@ -10,12 +10,13 @@ The window only shows state and reports user intent through signals; the app obj
 import os
 import time
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QButtonGroup, QFileDialog, QFrame, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMenu, QMessageBox, QScrollArea,
                                QSizePolicy, QStackedWidget, QWidget)
 
+import audio_devices
 from result_thread import Status
 from ui import theme
 from ui.context_panel import ContextPanel
@@ -38,7 +39,8 @@ class MainWindow(QMainWindow):
     recordClicked = Signal()
     newSessionRequested = Signal()
     continueSessionRequested = Signal(int)
-    sendToClaudeRequested = Signal(int)
+    sendToClaudeRequested = Signal(int)              # whole session as context
+    sendTextToClaudeRequested = Signal(str)          # one dictation (e.g. the last one)
     summarizeRequested = Signal(int)
     settingChangeRequested = Signal(tuple, object)   # config keys, value (save + apply)
     settingsSaved = Signal(dict)                     # previous config snapshot
@@ -230,15 +232,15 @@ class MainWindow(QMainWindow):
         self.continue_btn.clicked.connect(
             lambda: self.viewed_session_id and self.continueSessionRequested.emit(self.viewed_session_id))
         hl.addWidget(self.continue_btn, 0, top)
-        copy_btn = theme.button('Copy as context', None, 'copy',
-                                'Copy this session as a context block for a prompt')
-        copy_btn.clicked.connect(lambda: self.copy_session(for_claude=True))
-        hl.addWidget(copy_btn, 0, top)
-        send_btn = theme.button('Send to Claude Code', 'warm', 'send',
-                                'Paste this session into the Claude Code window as context')
-        send_btn.clicked.connect(lambda: self.viewed_session_id and
-                                 self.sendToClaudeRequested.emit(self.viewed_session_id))
-        hl.addWidget(send_btn, 0, top)
+        session_btn = theme.button('Send session', None, 'send',
+                                   'Send the whole session to Claude as context')
+        session_btn.clicked.connect(lambda: self.viewed_session_id and
+                                    self.sendToClaudeRequested.emit(self.viewed_session_id))
+        hl.addWidget(session_btn, 0, top)
+        last_btn = theme.button('Send last dictation', 'warm', 'send',
+                                'Send only the most recent dictation of this session to Claude')
+        last_btn.clicked.connect(self.send_last_dictation)
+        hl.addWidget(last_btn, 0, top)
         more = theme.button('', None, 'more', 'More actions')
         more.setFixedWidth(40)
         more.clicked.connect(lambda: self._session_menu(self.viewed_session_id).exec(
@@ -263,8 +265,17 @@ class MainWindow(QMainWindow):
         mid = vbox(spacing=4)
         self.dock_wave = Waveform(bars=34)
         mid.addWidget(self.dock_wave)
+        info = hbox(spacing=6)
+        self.mic_btn = theme.button('', 'ghost', 'mic', 'Choose the microphone', icon_color=theme.MUTED)
+        self.mic_btn.setFixedHeight(26)
+        self.mic_btn.setStyleSheet('QPushButton { padding: 0 8px; font-weight: 400; font-size: 12px; }')
+        self.mic_btn.clicked.connect(self._open_mic_menu)
+        self.mic_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        info.addWidget(self.mic_btn)
         self.dock_label = theme.label('', 'faint')
-        mid.addWidget(self.dock_label)
+        self.dock_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        info.addWidget(self.dock_label, 1)
+        mid.addLayout(info)
         lay.addLayout(mid, 1)
 
         group = QFrame()
@@ -375,6 +386,7 @@ class MainWindow(QMainWindow):
     def _append_entry(self, d):
         entry = EntryWidget(d)
         entry.copyRequested.connect(self._copy_text)
+        entry.sendRequested.connect(self.sendTextToClaudeRequested)
         entry.deleteRequested.connect(self._delete_dictation)
         self.timeline.insertWidget(self.timeline.count() - 1, entry)
         self.entry_count += 1
@@ -435,8 +447,10 @@ class MainWindow(QMainWindow):
                                  'Summarising…' if busy else 'Summarise with local LLM',
                                  lambda: self.request_summary(session_id))
         summary.setEnabled(not busy)
-        menu.addAction(theme.icon('send', theme.MUTED), 'Send to Claude Code',
+        menu.addAction(theme.icon('send', theme.MUTED), 'Send session to Claude',
                        lambda: self.sendToClaudeRequested.emit(session_id))
+        menu.addAction(theme.icon('send', theme.MUTED), 'Send last dictation to Claude',
+                       lambda: self.send_last_dictation(session_id))
         menu.addAction(theme.icon('copy', theme.MUTED), 'Copy as context',
                        lambda: self.copy_session(True, session_id))
         menu.addAction(theme.icon('copy', theme.MUTED), 'Copy as Markdown',
@@ -461,6 +475,14 @@ class MainWindow(QMainWindow):
         self.summarizing.add(sid)
         self.show_toast('Summarising with the local LLM…')
         self.summarizeRequested.emit(sid)
+
+    def send_last_dictation(self, session_id=None):
+        sid = session_id or self.viewed_session_id
+        last = self.store.dictations(sid, limit=1) if sid else []
+        if not last:
+            self.show_toast('This session has no dictations yet')
+            return
+        self.sendTextToClaudeRequested.emit(last[-1]['text'])
 
     def copy_session(self, for_claude, session_id=None):
         sid = session_id or self.viewed_session_id
@@ -560,9 +582,31 @@ class MainWindow(QMainWindow):
         self._update_dock_label()
 
     def _update_dock_label(self):
-        device = ConfigManager.get_config_value('recording_options', 'sound_device') or 'default mic'
+        value = ConfigManager.get_config_value('recording_options', 'sound_device')
+        short = audio_devices.short_name(value) + ('' if value else ' (default)')
+        self.mic_btn.setText(f' {short}  ▾')
+        self.mic_btn.setToolTip(f'Microphone: {audio_devices.describe(value)}. Click to choose another one.')
         text = f'Last typed into {self.last_target}' if self.last_target else 'Record button → this session only'
-        self.dock_label.setText(f'{text}  ·  mic: {device}')
+        self.dock_label.setText(f'·  {text}')
+
+    def _open_mic_menu(self):
+        if not self.dock_wave.active:   # re-scanning would break an open recording stream
+            audio_devices.refresh()
+        current = ConfigManager.get_config_value('recording_options', 'sound_device')
+        current_index = audio_devices.resolve(current)
+        menu = QMenu(self)
+        default = audio_devices.default_input()
+        choices = [(f'Windows default ({default.label})' if default else 'Windows default', None)]
+        choices += [(dev.label, dev.value) for dev in audio_devices.list_inputs()]
+        for text, value in choices:
+            action = menu.addAction(text)
+            action.setCheckable(True)
+            selected = (value is None and not current) or (
+                value is not None and current and audio_devices.resolve(value) == current_index)
+            action.setChecked(bool(selected))
+            action.triggered.connect(lambda _=False, v=value: self.settingChangeRequested.emit(
+                ('recording_options', 'sound_device'), v))
+        menu.exec(self.mic_btn.mapToGlobal(self.mic_btn.rect().topLeft()) - QPoint(0, menu.sizeHint().height()))
 
     def refresh_stats(self):
         stats = self.store.stats()
@@ -622,7 +666,8 @@ class MainWindow(QMainWindow):
         sid = lambda: self.viewed_session_id   # noqa: E731
         actions = [
             ('New session', 'plus', 'Ctrl N', self.newSessionRequested.emit),
-            ('Send current session to Claude Code', 'send', '',
+            ('Send last dictation to Claude', 'send', '', self.send_last_dictation),
+            ('Send whole session to Claude', 'send', '',
              lambda: sid() and self.sendToClaudeRequested.emit(sid())),
             ('Copy current session as context', 'copy', '', lambda: self.copy_session(True)),
             ('Copy current session as Markdown', 'copy', '', lambda: self.copy_session(False)),

@@ -273,7 +273,7 @@ misc:
   start_minimized:
     value: false
     type: bool
-    description: "Start in the system tray without opening the main window."
+    description: "When WhisperWriter starts automatically at login, stay in the system tray instead of opening the window. Starting it yourself always opens the window."
 
 # Dictation history (stored locally in SQLite)
 sessions:
@@ -304,6 +304,10 @@ claude_code:
     value: true
     type: bool
     description: "Wrap file names like auth_guard.py in backticks when dictating into Claude Code."
+  submit_on_send:
+    value: true
+    type: bool
+    description: "The Send buttons press Enter after pasting, so the session or dictation is sent right away. Turn off to add a question first."
 
 # Look and feel
 appearance:

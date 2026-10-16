@@ -8,11 +8,12 @@ changed — so there is no app restart.
 
 import os
 
-from PySide6.QtCore import QUrl, Qt, Signal
+from PySide6.QtCore import QEvent, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QLabel, QLineEdit,
                                QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QWidget)
 
+import audio_devices
 import claude_integration
 from engine import EngineState
 from llamacpp_server import SERVER_KEYS as LLM_SERVER_KEYS
@@ -39,10 +40,10 @@ LABELS = {
     'enabled': 'Enabled', 'n_gpu_layers': 'GPU layers', 'context_size': 'Context size',
     'system_prompt': 'System prompt', 'timeout_s': 'Timeout (s)',
     'print_to_terminal': 'Log to terminal', 'hide_status_window': 'Hide floating recorder',
-    'noise_on_completion': 'Beep when done', 'start_minimized': 'Start in tray',
+    'noise_on_completion': 'Beep when done', 'start_minimized': 'Start in tray at login',
     'new_session_after_minutes': 'New session after idle (min)', 'db_path': 'Database file',
     'smart_terminal_mode': 'Claude Code aware typing', 'suppress_enter': 'Never press Enter in Claude Code',
-    'backtick_filenames': 'Wrap file names in backticks',
+    'backtick_filenames': 'Wrap file names in backticks', 'submit_on_send': 'Send buttons submit right away',
     'min_speech_duration': 'Minimum speech (ms)', 'vad_aggressiveness': 'Noise rejection (0–3)',
     'filter_hallucinations': 'Filter Whisper hallucinations', 'theme': 'Theme', 'accent': 'Accent colour',
 }
@@ -86,7 +87,8 @@ SECTIONS = [
      + [LLM + (k,) for k in LLM_SERVER_KEYS + LLM_TUNING_KEYS]),
     ('claude', 'Claude Code', 'terminal',
      'Dictate prompts straight into Claude Code and let it read your past sessions.',
-     [('claude_code', k) for k in ('smart_terminal_mode', 'suppress_enter', 'backtick_filenames')]),
+     [('claude_code', k) for k in ('smart_terminal_mode', 'suppress_enter', 'backtick_filenames',
+                                   'submit_on_send')]),
     ('sessions', 'Sessions & storage', 'db',
      'Every dictation is stored locally in SQLite. Nothing leaves your machine.',
      [('sessions', k) for k in ('enabled', 'new_session_after_minutes', 'db_path')]),
@@ -158,11 +160,13 @@ class SettingsPage(QWidget):
         self.scroll.setWidgetResizable(True)
         body = QWidget()
         body.setObjectName('SettingsBody')
+        self.body = body
         self.body_lay = vbox((36, 28, 36, 48), 20, body)
         for section in SECTIONS:
             self._build_section(*section)
         self.body_lay.addStretch(1)
         self.scroll.setWidget(body)
+        self.scroll.viewport().installEventFilter(self)
         self.scroll.verticalScrollBar().valueChanged.connect(self._sync_nav)
         right.addWidget(self.scroll, 1)
         right.addWidget(self._build_save_bar())
@@ -170,6 +174,22 @@ class SettingsPage(QWidget):
         self.load_from_config()
 
     # ------------------------------------------------------------------ layout
+    def eventFilter(self, obj, event):
+        if obj is self.scroll.viewport() and event.type() == QEvent.Type.Resize:
+            QTimer.singleShot(0, self._fit_body)
+        return super().eventFilter(obj, event)
+
+    CONTENT_WIDTH = 860
+
+    def _fit_body(self):
+        """Limit the content width through the right margin (a maximum width on the
+        sections would make Qt compute word-wrapped heights at the wrong width), then give
+        the body its real height, which QScrollArea's size hints underestimate."""
+        width = self.scroll.viewport().width()
+        right = max(36, width - 36 - self.CONTENT_WIDTH)
+        self.body_lay.setContentsMargins(36, 28, right, 48)
+        self.body.setMinimumHeight(self.body_lay.totalHeightForWidth(width))
+
     def _build_nav(self):
         nav = QWidget()
         nav.setObjectName('SettingsNav')
@@ -208,7 +228,6 @@ class SettingsPage(QWidget):
 
     def _build_section(self, key, title, _icon, intro, fields):
         wrap = QWidget()
-        wrap.setMaximumWidth(860)
         lay = vbox((0, 8, 0, 0), 12, wrap)
         lay.addWidget(theme.label(title, 'h1'))
         lay.addWidget(theme.label(intro, 'muted', wrap=True))
@@ -358,21 +377,11 @@ class SettingsPage(QWidget):
         if name == 'sound_device':
             w = QComboBox()
             w.setFixedWidth(320)
-            w.addItem('Default (system microphone)', None)
-            try:
-                import sounddevice as sd   # imported here: enumerating devices is slow-ish
-                seen = set()
-                for dev in sd.query_devices():
-                    if dev.get('max_input_channels', 0) > 0 and dev['name'] not in seen:
-                        seen.add(dev['name'])
-                        w.addItem(dev['name'], dev['name'])
-            except Exception:
-                pass
+            self._fill_microphones(w)
             w.currentIndexChanged.connect(self._mark_dirty)
             return w, w
         if name in MULTILINE:
-            w = QPlainTextEdit()
-            w.setFixedHeight(96)
+            w = QPlainTextEdit()   # height comes from the stylesheet (padding + border included)
             w.setPlaceholderText({
                 'vocabulary': 'auth_guard.py, JWT, OAuth, Vulkan, Stormace',
                 'word_replacements': 'cloud code = Claude Code\nnitea = Nitea',
@@ -406,6 +415,14 @@ class SettingsPage(QWidget):
             w.setPlaceholderText('auto-detect (e.g. en, nl)')
         return w, w
 
+    @staticmethod
+    def _fill_microphones(combo):
+        combo.clear()
+        default = audio_devices.default_input()
+        combo.addItem(f'Windows default ({default.label})' if default else 'Windows default', None)
+        for dev in audio_devices.list_inputs():
+            combo.addItem(dev.label, dev.value)
+
     # ------------------------------------------------------------------ values
     def load_from_config(self):
         self._loading = True
@@ -420,8 +437,12 @@ class SettingsPage(QWidget):
             elif isinstance(w, QComboBox) and keys[-1] == 'sound_device':
                 idx = w.findData(value)
                 if idx < 0 and value is not None:
-                    w.addItem(f'{value} (not connected)', value)
-                    idx = w.count() - 1
+                    index = audio_devices.resolve(value)
+                    match = next((d for d in audio_devices.list_inputs() if d.index == index), None)
+                    idx = w.findData(match.value) if match else -1
+                    if idx < 0:
+                        w.addItem(f'{value} (not connected)', value)
+                        idx = w.count() - 1
                 w.setCurrentIndex(max(0, idx))
             elif isinstance(w, QComboBox):
                 w.setCurrentText('' if value is None else str(value))
@@ -484,6 +505,7 @@ class SettingsPage(QWidget):
             visible = (group == 'whispercpp') == (engine is EngineKind.WHISPERCPP)
             for w in widgets:
                 w.setVisible(visible)
+        QTimer.singleShot(0, self._fit_body)
 
     def set_engine_info(self, status):
         """Show an EngineStatus: title plus the real server/GPU details."""

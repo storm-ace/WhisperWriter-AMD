@@ -57,6 +57,9 @@ _CLAUDE_TITLE = re.compile(r'^\s*[✳✢✻✽⠀-⣿]|\bclaude code\b|^\s*claud
 
 # Processes that indicate a running Claude Code CLI (native build, or the npm package on node).
 _CLAUDE_PROCESSES = {'claude.exe', 'node.exe'}
+
+# The Claude desktop app (chat and its Code tab).
+CLAUDE_APP_EXES = {'claude.exe'}
 _PROCESS_CACHE_S = 3.0
 _process_cache = (0.0, frozenset())
 
@@ -117,18 +120,30 @@ class Target:
         return self.pid == os.getpid()
 
     @property
-    def is_claude_code(self):
+    def is_claude_app(self):
+        """The Claude desktop app (its chat or Code tab)."""
+        return self.exe.lower() in CLAUDE_APP_EXES
+
+    @property
+    def is_claude_terminal(self):
         """A terminal/editor whose title looks like Claude Code, while a Claude process runs."""
         return (self.exe.lower() in TERMINAL_HOSTS
                 and bool(_CLAUDE_TITLE.search(self.title))
                 and claude_code_running())
 
     @property
+    def is_claude_code(self):
+        """Any window where Claude Code prompts are typed: the desktop app or a terminal."""
+        return self.is_claude_app or self.is_claude_terminal
+
+    @property
     def label(self):
-        """Short display label, e.g. 'Windows Terminal · Claude Code'."""
+        """Short display label, e.g. 'Windows Terminal · Claude Code' or 'Claude app'."""
         if not self.app:
             return ''
-        return f'{self.app} · Claude Code' if self.is_claude_code else self.app
+        if self.is_claude_app:
+            return 'Claude app'
+        return f'{self.app} · Claude Code' if self.is_claude_terminal else self.app
 
 
 def _window_target(hwnd):
@@ -164,7 +179,7 @@ def foreground_target():
 
 
 def find_claude_code_window():
-    """The top-most visible window running Claude Code, or None."""
+    """The most recently used visible Claude window (desktop app or Claude Code terminal)."""
     if os.name != 'nt' or not claude_code_running():
         return None
     user32 = ctypes.windll.user32
@@ -211,6 +226,14 @@ _FILENAME = re.compile(
     r'toml|ini|cfg|cs|csproj|sln|cpp|cc|c|h|hpp|go|rs|java|kt|swift|rb|php|sql|html|css|scss|'
     r'sh|ps1|bat|vue|svelte|dart|lua|xml|txt|env|lock|dockerfile))(?![`\w])',
     re.IGNORECASE)
+
+
+_CLOUD_CODE = re.compile(r'\bcloud[\s-]?code\b', re.IGNORECASE)
+
+
+def fix_claude_name(text):
+    """Whisper hears "Claude Code" as "cloud code"; fix it when dictating into Claude."""
+    return _CLOUD_CODE.sub('Claude Code', text)
 
 
 def backtick_filenames(text):

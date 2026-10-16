@@ -4,6 +4,7 @@ import os
 import sys
 import threading
 import time
+import traceback
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QAction, QGuiApplication
@@ -17,7 +18,7 @@ from input_simulation import InputSimulator
 from key_listener import KeyListener
 from llamacpp_server import SERVER_KEYS as LLM_SERVER_KEYS
 from recording import DictationController
-from sessions import SessionStore
+from sessions import SessionStore, app_data_dir
 from transcription import summarize_with_llm
 from ui import theme
 from ui.main_window import MainWindow
@@ -26,6 +27,35 @@ from utils import ConfigManager
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTANCE_NAME = 'WhisperWriter-AMD'
+APP_USER_MODEL_ID = 'Stormace.WhisperWriter.AMD'
+
+
+def set_windows_app_id():
+    """Give the process its own taskbar identity, so Windows shows the WhisperWriter icon
+    (and groups its windows) instead of the generic python.exe icon."""
+    if os.name == 'nt':
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+        except Exception:
+            pass
+
+
+def install_crash_log():
+    """Write unhandled exceptions to %APPDATA%/WhisperWriter/crash.log; under pythonw.exe
+    (start_hidden.vbs) there is no console that would show them."""
+    def hook(exc_type, exc, tb):
+        try:
+            os.makedirs(app_data_dir(), exist_ok=True)
+            with open(os.path.join(app_data_dir(), 'crash.log'), 'a', encoding='utf-8') as f:
+                f.write(time.strftime('\n=== %Y-%m-%d %H:%M:%S ===\n'))
+                traceback.print_exception(exc_type, exc, tb, file=f)
+        except OSError:
+            pass
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = hook
+    threading.excepthook = lambda args: hook(args.exc_type, args.exc_value, args.exc_traceback)
 
 
 class KeyBridge(QObject):
@@ -107,7 +137,9 @@ class WhisperWriterApp(QObject):
             self.main_window.show()
             self.main_window.show_settings('engine')
             self.main_window.show_toast('Welcome! Pick your engine and hit Save & apply.', 6000)
-        elif not ConfigManager.get_config_value('misc', 'start_minimized'):
+        elif '--autostart' in sys.argv and ConfigManager.get_config_value('misc', 'start_minimized'):
+            print('WhisperWriter is running in the system tray.')
+        else:
             self.main_window.show()
 
     # ================================================================ building
@@ -133,7 +165,8 @@ class WhisperWriterApp(QObject):
         w.recordClicked.connect(self.dictation.toggle_from_button)
         w.newSessionRequested.connect(self.new_session)
         w.continueSessionRequested.connect(self.set_active_session)
-        w.sendToClaudeRequested.connect(self.send_to_claude)
+        w.sendToClaudeRequested.connect(self.send_session_to_claude)
+        w.sendTextToClaudeRequested.connect(lambda text: self.send_to_claude(text, 'dictation'))
         w.summarizeRequested.connect(self.summarize_session)
         w.settingChangeRequested.connect(self.change_setting)
         w.settingsSaved.connect(self.apply_settings)
@@ -354,21 +387,35 @@ class WhisperWriterApp(QObject):
         self.main_window.refresh_sessions()
         self.main_window.show_toast('Summary saved to the session')
 
-    def send_to_claude(self, session_id):
-        """Paste a session as a context block into the Claude Code window, without Enter."""
-        text = self.store.session_markdown(session_id, for_claude=True)
+    def send_session_to_claude(self, session_id):
+        """Whole session (with its summary) as a <dictation-session> context block."""
+        self.send_to_claude(self.store.session_markdown(session_id, for_claude=True), 'session')
+
+    def send_to_claude(self, text, what):
+        """
+        Paste `text` into the most recently used Claude window (desktop app or Claude Code
+        terminal) and, with submit_on_send, press Enter. Falls back to the clipboard.
+        """
         target = find_claude_code_window()
         if target is None or not focus_window(target.hwnd):
             QGuiApplication.clipboard().setText(text)
-            self.main_window.show_toast('No Claude Code window found — the session is on your '
+            self.main_window.show_toast(f'No Claude window found — the {what} is on your '
                                         'clipboard, paste it with Ctrl+V', 5000)
             return
         self.input_simulator.paste(text)
-        self.main_window.show_toast(f'Sent to Claude Code in {target.app} — review it and press Enter', 4000)
+        if ConfigManager.get_config_value('claude_code', 'submit_on_send'):
+            time.sleep(0.2)   # let the paste land before submitting
+            self.input_simulator.press_enter()
+            self.main_window.show_toast(f'Sent the {what} to {target.label}', 3000)
+        else:
+            self.main_window.show_toast(f'Pasted the {what} into {target.label} — '
+                                        'add your question and press Enter', 4000)
 
 
 def main():
     os.chdir(ROOT)   # relative asset paths (assets/beep.wav) resolve from the repository root
+    install_crash_log()
+    set_windows_app_id()
     WhisperWriterApp().run()
 
 

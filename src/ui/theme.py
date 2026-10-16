@@ -209,7 +209,8 @@ QToolButton[role="pill-stop"] {{ background: {HOVER}; border-radius: 16px;
 QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
     background: {BG}; border: 1px solid {BORDER_2}; border-radius: 8px;
     padding: 0 10px; min-height: 34px; selection-background-color: {SELECTION}; }}
-QPlainTextEdit {{ padding: 8px 10px; font-family: "{mono}"; font-size: 12px; }}
+QPlainTextEdit {{ padding: 8px 10px; font-family: "{mono}"; font-size: 12px;
+    min-height: 76px; max-height: 76px; }}
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{ border-color: {INFO}; }}
 QLineEdit[role="search"] {{ background: {SURFACE}; border-color: {BORDER}; }}
 QLineEdit[role="palette"] {{ background: transparent; border: 0; font-size: 15px;
@@ -376,8 +377,14 @@ def icon(name, color=None, size=48):
     return _icon_cache[key]
 
 
+APP_ICON_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), 'assets', 'whisperwriter.ico')
+
+
 def app_icon():
-    """Tray/window icon: accent waveform on a dark rounded square."""
+    """Window, taskbar and tray icon (multi-size .ico; drawn on the fly if it is missing)."""
+    if os.path.isfile(APP_ICON_FILE):
+        return QIcon(APP_ICON_FILE)
     return _render_svg(
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
         f'<rect x="0.5" y="0.5" width="23" height="23" rx="6" fill="#131417"/>'

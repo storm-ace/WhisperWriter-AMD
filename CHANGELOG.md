@@ -15,7 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Enter there and wraps file names in backticks.
 - Project vocabulary, fed to Whisper as part of the initial prompt.
 - Floating recorder pill with live waveform that never steals focus.
-- "Send to Claude Code": pastes a session into the Claude Code window as context (no Enter).
+- "Send last dictation" and "Send session" (plus a send icon per dictation): paste into the
+  most recent Claude window (desktop app or Claude Code terminal) and submit right away
+  (`claude_code.submit_on_send`, on by default).
+- Microphone picker in the record dock, crash log (`%APPDATA%\WhisperWriter\crash.log`), app
+  icon, and an autostart shortcut (`create_shortcut.ps1 -Autostart`).
 - Session summaries with the local LLM, stored with the session and exposed over MCP.
 - Appearance settings: dark, light or system theme and four accent colours.
 - Real GPU detection: the engine card shows the device whisper-server picked.

@@ -188,7 +188,7 @@ without Vulkan. That is the whole setup.
 | --- | --- |
 | `start.bat` | Starts WhisperWriter with a console window, which is useful for logs |
 | `start_hidden.vbs` | Starts WhisperWriter with no console; it lives in the system tray |
-| `create_shortcut.ps1` | Creates a Start menu or autostart shortcut to `start_hidden.vbs` |
+| `create_shortcut.ps1` | Creates Desktop and Start menu shortcuts (with the WhisperWriter icon). Add `-Autostart` for a login shortcut; with **Start in tray at login** on, that one starts in the tray. |
 
 Closing the window keeps WhisperWriter running in the **system tray**. Quit from the tray
 menu, which also stops the GPU server. Starting it a second time brings the running window
@@ -247,9 +247,9 @@ Switch the mode in the record dock at the bottom of the main window:
 | 4 | **New session** | Starts a fresh session. One also starts automatically after 30 idle minutes. |
 | 5 | **Session list** | All sessions grouped by day. The dot marks the session new dictations go to. Right-click for more actions. |
 | 6 | **Session title** | Double-click to rename. Below it: start time, number of dictations, words and audio length. |
-| 7 | **Send to Claude Code** | Pastes the whole session into your Claude Code window as context. **Copy as context** next to it puts the same block on the clipboard; **⋯** has rename, summarise, export and delete. |
+| 7 | **Send session / Send last dictation** | **Send session** sends the whole session as context to the Claude app or your Claude Code terminal; **Send last dictation** sends only your most recent dictation. **⋯** has copy as context, rename, summarise, export and delete. |
 | 8 | **Summary** | The local-LLM summary of the session (decisions, tasks, open questions), once you have made one. |
-| 9 | **Dictation** | Time, length, target window, transcription speed, and whether the LLM corrected it. Hover to copy or delete. |
+| 9 | **Dictation** | Time, length, target window, transcription speed, and whether the LLM corrected it. The icons send this one dictation to Claude, copy it, or delete it. |
 | 10 | **Record button** | Dictates into this session only, without typing anywhere. Click again to stop. |
 | 11 | **Recording mode** | Continuous, Voice detect, Toggle or Hold. |
 | 12 | **Claude Code link** | Shows whether the MCP server is registered, so Claude Code can read your history. |
@@ -268,18 +268,27 @@ editor running Claude Code, WhisperWriter:
 - **wraps file names in backticks**: *"open auth_guard.py"* becomes ``open `auth_guard.py` ``;
 - labels the dictation `Windows Terminal · Claude Code` in your history.
 
-Claude Code is recognised by its window title (`✳ <task>`, a spinner, or "Claude Code") while
-a Claude process is running. Other terminals are left alone.
+Both the **Claude desktop app** (its Code tab) and **Claude Code in a terminal** count. A
+terminal is recognised by Claude Code's window title (`✳ <task>`, a spinner, or "Claude Code")
+while a Claude process is running. Other terminals are left alone.
 
 Typical flow: put your cursor in the Claude Code prompt, press the hotkey, explain the task,
 check the text, press Enter yourself.
 
-### Sending a whole session as context
+### Sending dictations to Claude
 
-Click **Send to Claude Code** in the session header (or use the palette). WhisperWriter finds
-your most recent Claude Code window, brings it to the front and pastes the session as a
-`<dictation-session>` block, including its summary. It does **not** press Enter, so you can add
-a question first. If no Claude Code window is open, the block is put on your clipboard instead.
+The session header has two buttons (both also in the palette and the **⋯** menu):
+
+| Button | Sends |
+| --- | --- |
+| **Send last dictation** | Only your most recent dictation, as plain text. Use it to send what you just said. |
+| **Send session** | The whole session as a `<dictation-session>` context block, including its summary. Use it to give Claude the full background. |
+
+Each dictation also has its own send icon. WhisperWriter finds the Claude window you used most
+recently (the desktop app or a Claude Code terminal), brings it to the front, pastes the text
+and presses Enter, so Claude gets it right away. To add a question before sending, turn off
+**Settings → Claude Code → Send buttons submit right away**. If no Claude window is open, the
+text is put on your clipboard instead.
 
 ### Letting Claude Code read your history (MCP)
 
@@ -401,7 +410,7 @@ description.
 | Status shows **whisper.cpp server not running** | Check **Server binary** and **Model file**. With a MinGW build, set **Extra DLL folder** to MinGW's `bin`. Then click **Restart engine**. |
 | The engine card says **no GPU found** | whisper.cpp was built without Vulkan, or the driver is too old. Rebuild with `-DGGML_VULKAN=ON`, update the AMD driver, and use whisper.cpp v1.8.1 or newer. The full server log is in `%APPDATA%\WhisperWriter\whisper-server.log`. |
 | **Summary failed: no local LLM server is running** | Set up llama.cpp under **Settings → Correction & vocabulary** and enable LLM correction. |
-| **Send to Claude Code** only copies to the clipboard | No Claude Code window was found (its title must show Claude Code's `✳` marker or "Claude Code"). Paste with `Ctrl+V`. |
+| **Send session** / **Send last dictation** only copies to the clipboard | No Claude window was found: open the Claude desktop app, or a terminal whose title shows Claude Code's `✳` marker or "Claude Code". Paste with `Ctrl+V`. |
 | Words appear that you never said | Raise **Noise rejection** to 3, raise **Minimum speech**, and keep the **hallucination filter** on. |
 | Continuous mode cuts sentences in half | Raise **Silence before stop** (for example to 1500 ms). |
 | Characters go missing while typing | Set **Insert text with** to `clipboard`. |

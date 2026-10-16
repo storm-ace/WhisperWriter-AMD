@@ -63,7 +63,7 @@ misc:
   print_to_terminal: true
   hide_status_window: false
   noise_on_completion: false
-  start_minimized: false      # start in the tray without opening the main window
+  start_minimized: false      # at login (--autostart) stay in the tray instead of opening the window
 # Dictation history (local SQLite, searchable from the app and from Claude Code via MCP)
 sessions:
   enabled: true
@@ -74,6 +74,7 @@ claude_code:
   smart_terminal_mode: true
   suppress_enter: true            # never auto-submit a prompt in Claude Code
   backtick_filenames: true        # auth_guard.py -> `auth_guard.py`
+  submit_on_send: true            # "Send to Claude Code" also presses Enter
 appearance:
   theme: dark                     # dark | light | system
   accent: orange                  # orange | amber | blue | violet

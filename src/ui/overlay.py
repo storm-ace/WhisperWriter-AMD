@@ -89,6 +89,13 @@ class RecorderOverlay(QWidget):
         self.wave = Waveform(bars=20)
         self.wave.active = True
         lay.addWidget(self.wave)
+        mic_icon = QLabel()
+        mic_icon.setPixmap(theme.icon('mic', theme.FAINT).pixmap(13, 13))
+        lay.addWidget(mic_icon)
+        lay.addSpacing(-8)
+        self.mic_label = theme.label('', 'faint')
+        self.mic_label.setToolTip('Microphone in use')
+        lay.addWidget(self.mic_label)
         self.target_label = theme.label('', 'faint')
         lay.addWidget(self.target_label)
         stop = theme.tool_button('stop', 'Stop and transcribe', theme.TEXT, 14)
@@ -136,13 +143,15 @@ class RecorderOverlay(QWidget):
     def is_showing_result(self):
         return self.isVisible() and self.hide_timer.isActive()
 
-    def show_recording(self, target_label='', restart_timer=True):
+    def show_recording(self, target_label='', mic=None, restart_timer=True):
         self.hide_timer.stop()
         self._return_to_recording = False
         self.pill.radius = 28
         if restart_timer or not self._started:
             self._started = time.monotonic()
         self.wave.reset()
+        if mic is not None:
+            self.mic_label.setText(f'{mic}')
         self.target_label.setText(f'→ {target_label}' if target_label else '')
         self.target_label.setVisible(bool(target_label))
         self._update_timer()

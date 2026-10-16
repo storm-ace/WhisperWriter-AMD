@@ -40,6 +40,7 @@ class EntryWidget(QFrame):
     """One dictation in the timeline."""
 
     copyRequested = Signal(str)
+    sendRequested = Signal(str)
     deleteRequested = Signal(int)
 
     def __init__(self, d):
@@ -64,6 +65,9 @@ class EntryWidget(QFrame):
         if d.get('corrected'):
             head.addWidget(theme.label('LLM corrected', 'chip-info'))
         head.addStretch(1)
+        send_btn = theme.tool_button('send', 'Send this dictation to Claude', theme.FAINT, 14)
+        send_btn.clicked.connect(lambda: self.sendRequested.emit(d['text']))
+        head.addWidget(send_btn)
         copy_btn = theme.tool_button('copy', 'Copy text', theme.FAINT, 14)
         copy_btn.clicked.connect(lambda: self.copyRequested.emit(d['text']))
         head.addWidget(copy_btn)

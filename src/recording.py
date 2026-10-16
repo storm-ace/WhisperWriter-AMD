@@ -7,7 +7,8 @@ import os
 
 from PySide6.QtCore import QObject, Signal
 
-from active_window import Target, backtick_filenames, foreground_target
+import audio_devices
+from active_window import Target, backtick_filenames, fix_claude_name, foreground_target
 from engine import EngineState
 from result_thread import ResultThread, Status
 from utils import ConfigManager
@@ -113,7 +114,9 @@ class DictationController(QObject):
         if not self._overlay_enabled():
             return
         if status == Status.RECORDING:
-            self.overlay.show_recording(thread.target.label if thread.source == Source.HOTKEY else 'session')
+            mic = audio_devices.short_name(ConfigManager.get_config_value('recording_options', 'sound_device'))
+            target = thread.target.label if thread.source == Source.HOTKEY else 'session'
+            self.overlay.show_recording(target, mic)
         elif status == Status.TRANSCRIBING:
             self.overlay.show_transcribing(self.engine.status.compute_label)
         elif status == Status.IDLE and not self.overlay.is_showing_result:
@@ -129,6 +132,8 @@ class DictationController(QObject):
         target = thread.target
         claude_mode = (ConfigManager.get_config_value('claude_code', 'smart_terminal_mode')
                        and target.is_claude_code)
+        if claude_mode:
+            result.text = fix_claude_name(result.text)
         if claude_mode and ConfigManager.get_config_value('claude_code', 'backtick_filenames'):
             result.text = backtick_filenames(result.text)
 

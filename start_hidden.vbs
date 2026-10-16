@@ -1,7 +1,11 @@
-' WhisperWriter — stille autostart (geen console-venster).
-' Start run.py via pythonw.exe uit de lokale venv (.venv), onafhankelijk van waar de repo staat.
+' WhisperWriter - start without a console window (pythonw.exe from the local .venv).
+' Arguments are passed on, e.g. --autostart for the login shortcut.
 Set sh = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
 sh.CurrentDirectory = scriptDir
-sh.Run """" & scriptDir & "\.venv\Scripts\pythonw.exe"" run.py", 0, False
+args = ""
+For Each a In WScript.Arguments
+    args = args & " " & a
+Next
+sh.Run """" & scriptDir & "\.venv\Scripts\pythonw.exe"" run.py" & args, 0, False
