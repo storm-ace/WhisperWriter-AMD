@@ -93,8 +93,14 @@ class InputSimulator:
         on the clipboard so it can be pasted manually if the automatic Ctrl+V
         failed.
         """
-        restore = ConfigManager.get_config_value('post_processing', 'restore_clipboard')
+        self.paste(text, restore=ConfigManager.get_config_value('post_processing', 'restore_clipboard'))
 
+    def paste(self, text, restore=False):
+        """
+        Put `text` on the clipboard and press Ctrl+V, whatever the input method. Used for
+        multi-line text: typing it would press Enter at every newline.
+        """
+        keyboard = getattr(self, 'keyboard', None) or PynputController()
         previous = None
         if restore:
             try:
@@ -105,10 +111,10 @@ class InputSimulator:
         pyperclip.copy(text)
         time.sleep(0.05)  # let the OS register the new clipboard before pasting
 
-        self.keyboard.press(Key.ctrl)
-        self.keyboard.press('v')
-        self.keyboard.release('v')
-        self.keyboard.release(Key.ctrl)
+        keyboard.press(Key.ctrl)
+        keyboard.press('v')
+        keyboard.release('v')
+        keyboard.release(Key.ctrl)
 
         if restore and previous is not None:
             time.sleep(0.15)  # let the paste complete before restoring

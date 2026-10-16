@@ -6,6 +6,7 @@ model_options:
   engine: whispercpp          # whispercpp (GPU/Vulkan) | faster-whisper (CPU)
   common:
     initial_prompt: null      # optional: bias the transcription with domain terms
+    vocabulary: ""            # optional: names, file names, jargon (comma separated)
     language: null            # e.g. 'en', 'nl'; null = auto-detect
     temperature: 0.0
   # Used when engine = whispercpp (local whisper.cpp server, GPU via Vulkan)
@@ -31,7 +32,7 @@ recording_options:
   recording_mode: hold_to_record  # continuous | voice_activity_detection | press_to_toggle | hold_to_record
   input_backend: pynput
   sample_rate: 16000
-  silence_duration: 900
+  silence_duration: 1200
   min_duration: 100
   sound_device: null
 post_processing:
@@ -62,3 +63,18 @@ misc:
   print_to_terminal: true
   hide_status_window: false
   noise_on_completion: false
+  start_minimized: false      # at login (--autostart) stay in the tray instead of opening the window
+# Dictation history (local SQLite, searchable from the app and from Claude Code via MCP)
+sessions:
+  enabled: true
+  new_session_after_minutes: 30   # 0 = never split sessions automatically
+  db_path: null                   # null = %APPDATA%\WhisperWriter\sessions.db
+# Smarter typing when the focused window is a terminal/editor running Claude Code
+claude_code:
+  smart_terminal_mode: true
+  suppress_enter: true            # never auto-submit a prompt in Claude Code
+  backtick_filenames: true        # auth_guard.py -> `auth_guard.py`
+  submit_on_send: true            # "Send to Claude Code" also presses Enter
+appearance:
+  theme: dark                     # dark | light | system
+  accent: orange                  # orange | amber | blue | violet

@@ -1,7 +1,7 @@
 # INSTALL — WhisperWriter-AMD (Windows)
 
 Step-by-step installation on Windows, plus the problems we hit and how they were solved.
-For the **AMD GPU engine** (whisper.cpp + Vulkan), see the *AMD GPU fork* section in [`README.md`](README.md).
+For the **AMD GPU engine** (whisper.cpp + Vulkan), see [Step 3 in the README](README.md#step-3--build-whispercpp-with-vulkan-amd-gpu).
 
 ## Requirements
 
@@ -64,7 +64,7 @@ but `large-v3` is slow on CPU — consider `model: medium` for faster responses.
 ### 4c. AMD GPU path (Windows)
 
 faster-whisper/ctranslate2 cannot target AMD GPUs (CUDA-only). Use the **whisper.cpp Vulkan engine**
-this fork adds — see the *AMD GPU fork* section in [`README.md`](README.md) for the build + config steps.
+this fork adds — see [Step 3 in the README](README.md#step-3--build-whispercpp-with-vulkan-amd-gpu) for the build + config steps.
 
 ### 5. First run
 
@@ -72,7 +72,8 @@ this fork adds — see the *AMD GPU fork* section in [`README.md`](README.md) fo
 python run.py
 ```
 
-A settings window opens; closing it leaves the app running in the background. For the
+The main window opens on Settings the first time; closing the window leaves the app running
+in the tray. For the
 `faster-whisper` engine the first run downloads the model (~3 GB for `large-v3`) to
 `~/.cache/huggingface`.
 

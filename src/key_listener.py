@@ -280,6 +280,7 @@ class KeyListener:
         """Initialize the KeyListener with backends and activation keys."""
         self.backends = []
         self.active_backend = None
+        self._running_backend = None   # backend currently started (start() is idempotent)
         self.key_chord = None
         self.key_chord_secondary = None
         # Records which key triggered the most recent activation: True when the
@@ -344,16 +345,20 @@ class KeyListener:
         self.select_backend_from_config()
 
     def start(self):
-        """Start the active backend."""
-        if self.active_backend:
-            self.active_backend.start()
-        else:
+        """Start the active backend. Idempotent: a running backend is not started twice
+        (stacked listeners would feed every key event into the chords more than once)."""
+        if not self.active_backend:
             raise RuntimeError("No active backend selected")
+        if self._running_backend is self.active_backend:
+            return
+        self.active_backend.start()
+        self._running_backend = self.active_backend
 
     def stop(self):
         """Stop the active backend."""
         if self.active_backend:
             self.active_backend.stop()
+        self._running_backend = None
 
     def load_activation_keys(self):
         """Load activation keys from configuration.

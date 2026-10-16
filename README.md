@@ -1,262 +1,457 @@
-# <img src="./assets/ww-logo.png" alt="WhisperWriter icon" width="25" height="25"> WhisperWriter
-
-![version](https://img.shields.io/badge/version-1.0.12--amd-blue)
+<h1 align="center">WhisperWriter AMD</h1>
 
 <p align="center">
-    <img src="./assets/ww-demo-image-02.gif" alt="WhisperWriter demo gif" width="340" height="136">
+  <b>Local, GPU-accelerated speech-to-text for Windows.</b><br>
+  Press a hotkey, talk, and the text appears in whatever window you are typing in.<br>
+  Built for <b>AMD Radeon GPUs</b> and for dictating prompts into <b>Claude Code</b>.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-2.0.0--amd-orange" alt="version 2.0.0-amd">
+  <img src="https://img.shields.io/badge/python-3.11-blue" alt="Python 3.11">
+  <img src="https://img.shields.io/badge/UI-PySide6%20%2F%20Qt%206-41cd52" alt="PySide6 / Qt 6">
+  <img src="https://img.shields.io/badge/GPU-AMD%20Vulkan-ed1c24" alt="AMD Vulkan">
+  <img src="https://img.shields.io/badge/license-GPL--3.0-lightgrey" alt="GPL-3.0">
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/main-window.png" alt="WhisperWriter main window: session list on the left, dictations of the selected session in the middle, Claude Code and engine panel on the right" width="900">
 </p>
 
 ---
 
-## 🟢 AMD GPU fork (whisper.cpp + Vulkan)
+## Highlights
 
-This is a fork of [savbell/whisper-writer](https://github.com/savbell/whisper-writer) that adds a
-**GPU transcription engine for AMD GPUs and integrated GPUs on Windows**, where the stock
-`faster-whisper` engine cannot help.
+- **Fast on AMD.** Whisper runs on your Radeon GPU or iGPU through
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) + Vulkan. On a Radeon 8060S,
+  `large-v3-turbo` turns 11 s of speech into text in about 0.5 s, roughly **24× realtime**.
+- **Types anywhere.** The text goes into the focused window: terminal, editor, browser, chat.
+- **Remembers everything.** Every dictation is saved in a searchable local history, grouped
+  into sessions.
+- **Built for Claude Code.** It detects Claude Code in your terminal, never sends the prompt
+  for you, wraps file names in backticks, sends whole sessions to Claude Code as context, and
+  lets Claude Code read your dictation history through an MCP server.
+- **Summaries.** A local LLM can boil a session down to decisions, tasks and open questions.
+- **Handles noisy rooms.** Strict voice detection and a hallucination filter keep keyboard
+  clicks, fans and silence from becoming made-up text.
+- **Private.** Everything runs on your machine. No cloud, no account, no telemetry.
 
-**Why:** WhisperWriter transcribes with `faster-whisper`, which runs on `ctranslate2` — and that
-engine only supports **CPU and NVIDIA CUDA**. There is no ROCm/DirectML path on Windows, so AMD
-users were stuck on slow CPU transcription. This fork adds a third engine that runs Whisper through
-a local [**whisper.cpp**](https://github.com/ggml-org/whisper.cpp) server built with the **Vulkan**
-backend, which *does* run on AMD GPUs — including iGPUs.
+## Contents
 
-**Result:** on an AMD Radeon 8060S iGPU (Ryzen AI Max / Strix Halo, RDNA 3.5, `gfx1151`), full
-`large-v3` runs at roughly **~10× realtime** (≈1 s of compute for ~10 s of speech, model kept
-resident), versus ~1.2× realtime on CPU — at full `large-v3` quality.
+1. [How it works](#how-it-works)
+2. [Installation](#installation)
+3. [Your first dictation](#your-first-dictation)
+4. [A tour of the app](#a-tour-of-the-app)
+5. [Using WhisperWriter with Claude Code](#using-whisperwriter-with-claude-code)
+6. [Sessions, search and history](#sessions-search-and-history)
+7. [Light or dark](#light-or-dark)
+8. [Getting names and jargon right](#getting-names-and-jargon-right)
+9. [Settings reference](#settings-reference)
+10. [Troubleshooting](#troubleshooting)
+11. [For developers](#for-developers)
+12. [Credits and license](#credits-and-license)
 
-### What this fork adds
-- A new `model_options.engine` setting: **`faster-whisper`** (original CPU engine) or **`whispercpp`**
-  (this fork's GPU engine, via a local whisper.cpp HTTP server).
-- `src/whispercpp_server.py`: auto-starts/stops a `whisper-server` subprocess and keeps the model resident.
-- A tray icon that shows the active engine and whether the GPU server is running, plus a clean exit
-  that also stops the server.
+## How it works
 
-### Setup (Windows + AMD GPU)
-1. **Install WhisperWriter** as below (steps under *Getting Started*), using Python 3.11 + a venv.
-2. **Build whisper.cpp with Vulkan** (or use a community build). You need: the
-   [Vulkan SDK](https://vulkan.lunarg.com/), [CMake](https://cmake.org/), and a C++ toolchain (MSVC or
-   [MinGW-w64](https://winlibs.com/)). Then:
-   ```
-   git clone --branch v1.9.1 https://github.com/ggml-org/whisper.cpp
-   cd whisper.cpp
-   cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-   cmake --build build -j --config Release
-   ```
-   > Note: whisper.cpp **v1.8.1+** is required for AMD iGPU detection over Vulkan (v1.8.0 was broken).
-3. **Download a ggml model** (note: ggml format, not the faster-whisper format):
-   ```
-   curl -L -o whisper.cpp/models/ggml-large-v3.bin \
-     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
-   ```
-4. **Configure** `src/config.yaml` to use the engine (see [`config.yaml.example`](config.yaml.example)):
-   ```yaml
-   model_options:
-     engine: whispercpp
-     whispercpp:
-       binary_path: C:\path\to\whisper.cpp\build\bin\whisper-server.exe
-       model_path: C:\path\to\whisper.cpp\models\ggml-large-v3.bin
-       lib_path: C:\path\to\mingw64\bin   # only if you built with MinGW (for libstdc++/libgomp DLLs)
-   ```
-5. **Run** `python run.py`. Verify the server log shows your AMD device
-   (`ggml_vulkan: ... AMD Radeon ...` and `using Vulkan0 backend`), not a CPU fallback.
+```mermaid
+flowchart LR
+    A["Hotkey<br/>Ctrl+Shift+Space"] --> B["Microphone"]
+    B --> C["Voice detection<br/>noise floor + VAD"]
+    C -->|speech only| D["whisper.cpp server<br/>Vulkan on your GPU"]
+    D --> E["Clean-up<br/>hallucination filter,<br/>word replacements,<br/>optional local LLM"]
+    E --> F["Typed into the<br/>focused window"]
+    E --> G[("Session history<br/>SQLite + full-text search")]
+    G --> H["MCP server"]
+    H --> I["Claude Code"]
+```
 
-To switch back to CPU, set `engine: faster-whisper` and restart.
+1. You press the hotkey. A small pill at the bottom of the screen shows that it is listening.
+2. Voice detection waits for real speech, so clicks, fans and silence are ignored. When you
+   pause, the recording ends.
+3. The audio goes to a local **whisper.cpp** server running on your GPU. The model stays
+   loaded, so every dictation costs only inference time.
+4. The text is cleaned up, typed into the window you were in, and saved to the current session.
+5. Claude Code can later search those sessions through the built-in MCP server.
 
-### Improving accuracy (optional)
-Two post-processing options fix recurring transcription errors (configurable in Settings → Post processing):
-- **Word replacements** — a deterministic find-and-replace list for words the model consistently mishears (names, brands, jargon). One rule per line: `wrong = right`. Zero latency.
-- **LLM correction** — optionally run each transcription through a second local model ([llama.cpp](https://github.com/ggml-org/llama.cpp) + Vulkan, on the same AMD GPU) that fixes punctuation, casing and obvious mis-hears **without rewriting or translating**. Default **off**; adds ~0.4–1 s. Recommended model: **Gemma-3-4B-it (Q4_K_M GGUF)** — in local testing it followed the "correct, don't rewrite" instruction better than larger Dutch/translation-focused models. Build llama.cpp the same way as whisper.cpp (`-DGGML_VULKAN=ON`), grab a GGUF model, and point `post_processing.llm_correction` at `llama-server.exe` + the model.
+## Installation
 
----
+### What you need
 
-**Update (2024-05-28):** I've just merged in a major rewrite of WhisperWriter! We've migrated from using `tkinter` to using `PyQt5` for the UI, added a new settings window for configuration, a new continuous recording mode, support for a local API, and more! Please be patient as I work out any bugs that may have been introduced in the process. If you encounter any problems, please [open a new issue](https://github.com/savbell/whisper-writer/issues)!
+| | Requirement |
+| --- | --- |
+| OS | Windows 10 or 11 |
+| Python | **3.11** (3.12 and newer are not supported by the pinned dependencies) |
+| Git | [git-scm.com](https://git-scm.com/downloads) |
+| GPU (recommended) | Any Vulkan-capable GPU: AMD Radeon (discrete or iGPU), Intel Arc, NVIDIA |
+| Disk | about 2 GB for the app plus a model (`large-v3-turbo` is 1.6 GB) |
 
-WhisperWriter is a small speech-to-text app that uses [OpenAI's Whisper model](https://openai.com/research/whisper) to auto-transcribe recordings from a user's microphone to the active window.
+> **No GPU?** WhisperWriter also runs on the CPU with the built-in `faster-whisper` engine.
+> Skip [step 3](#step-3--build-whispercpp-with-vulkan-amd-gpu) and pick *faster-whisper* in
+> step 4.
 
-Once started, the script runs in the background and waits for a keyboard shortcut to be pressed (`ctrl+shift+space` by default). When the shortcut is pressed, the app starts recording from your microphone. There are four recording modes to choose from:
-- `continuous` (default): Recording will stop after a long enough pause in your speech. The app will transcribe the text and then start recording again. To stop listening, press the keyboard shortcut again.
-- `voice_activity_detection`: Recording will stop after a long enough pause in your speech. Recording will not start until the keyboard shortcut is pressed again.
-- `press_to_toggle` Recording will stop when the keyboard shortcut is pressed again. Recording will not start until the keyboard shortcut is pressed again.
-- `hold_to_record` Recording will continue until the keyboard shortcut is released. Recording will not start until the keyboard shortcut is held down again.
-
-You can change the activation shortcut (`activation_key`) — a keyboard combo or a mouse button — and the recording mode in the [Configuration Options](#configuration-options). While recording and transcribing, a small status window is displayed that shows the current stage of the process (but this can be turned off). Once the transcription is complete, the transcribed text will be automatically written to the active window.
-
-Transcription runs locally. This fork adds a GPU engine for AMD via [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (Vulkan); the original CPU engine ([faster-whisper](https://github.com/SYSTRAN/faster-whisper/)) is also available. Choose the engine in the [Configuration Options](#configuration-options). (The OpenAI-API transcription option from upstream has been removed in this fork.)
-
-**Fun fact:** Almost the entirety of the initial release of the project was pair-programmed with [ChatGPT-4](https://openai.com/product/gpt-4) and [GitHub Copilot](https://github.com/features/copilot) using VS Code. Practically every line, including most of this README, was written by AI. After the initial prototype was finished, WhisperWriter was used to write a lot of the prompts as well!
-
-## Getting Started
-
-### Prerequisites
-Before you can run this app, you'll need to have the following software installed:
-
-- Git: [https://git-scm.com/downloads](https://git-scm.com/downloads)
-- Python `3.11`: [https://www.python.org/downloads/](https://www.python.org/downloads/)
-
-If you want to run `faster-whisper` on your GPU, you'll also need to install the following NVIDIA libraries:
-
-- [cuBLAS for CUDA 12](https://developer.nvidia.com/cublas)
-- [cuDNN 8 for CUDA 12](https://developer.nvidia.com/cudnn)
-
-<details>
-<summary>More information on GPU execution</summary>
-
-The below was taken directly from the [`faster-whisper` README](https://github.com/SYSTRAN/faster-whisper?tab=readme-ov-file#gpu):
-
-**Note:** The latest versions of `ctranslate2` support CUDA 12 only. For CUDA 11, the current workaround is downgrading to the `3.24.0` version of `ctranslate2` (This can be done with `pip install --force-reinsall ctranslate2==3.24.0`).
-
-There are multiple ways to install the NVIDIA libraries mentioned above. The recommended way is described in the official NVIDIA documentation, but we also suggest other installation methods below.
-
-#### Use Docker
-
-The libraries (cuBLAS, cuDNN) are installed in these official NVIDIA CUDA Docker images: `nvidia/cuda:12.0.0-runtime-ubuntu20.04` or `nvidia/cuda:12.0.0-runtime-ubuntu22.04`.
-
-#### Install with `pip` (Linux only)
-
-On Linux these libraries can be installed with `pip`. Note that `LD_LIBRARY_PATH` must be set before launching Python.
+### Step 1 — Get the code
 
 ```bash
-pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
-
-export LD_LIBRARY_PATH=`python3 -c 'import os; import nvidia.cublas.lib; import nvidia.cudnn.lib; print(os.path.dirname(nvidia.cublas.lib.__file__) + ":" + os.path.dirname(nvidia.cudnn.lib.__file__))'`
+git clone https://github.com/storm-ace/WhisperWriter-AMD
+cd WhisperWriter-AMD
 ```
 
-**Note**: Version 9+ of `nvidia-cudnn-cu12` appears to cause issues due its reliance on cuDNN 9 (Faster-Whisper does not currently support cuDNN 9). Ensure your version of the Python package is for cuDNN 8.
+### Step 2 — Create a Python environment and install the dependencies
 
-#### Download the libraries from Purfview's repository (Windows & Linux)
-
-Purfview's [whisper-standalone-win](https://github.com/Purfview/whisper-standalone-win) provides the required NVIDIA libraries for Windows & Linux in a [single archive](https://github.com/Purfview/whisper-standalone-win/releases/tag/libs). Decompress the archive and place the libraries in a directory included in the `PATH`.
-
-</details>
-
-### Installation
-To set up and run the project, follow these steps:
-
-#### 1. Clone the repository:
-
-```
-git clone https://github.com/savbell/whisper-writer
-cd whisper-writer
+```bash
+py -3.11 -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt "setuptools<81"
 ```
 
-#### 2. Create a virtual environment and activate it:
+`setuptools<81` is needed because `ctranslate2` (used by the CPU engine) still imports
+`pkg_resources`.
 
+### Step 3 — Build whisper.cpp with Vulkan (AMD GPU)
+
+The stock `faster-whisper` engine only supports CPU and NVIDIA CUDA, so AMD GPUs would sit
+idle. WhisperWriter instead runs Whisper through a local `whisper-server` built with Vulkan.
+whisper.cpp does not publish a ready-made Vulkan build for Windows, so you build it once.
+It takes about five minutes.
+
+**3a. Install the build tools.** Run this in any terminal; accept the UAC prompts:
+
+```bash
+winget install -e --id KhronosGroup.VulkanSDK
+winget install -e --id Kitware.CMake
+winget install -e --id BrechtSanders.WinLibs.POSIX.UCRT
 ```
-python -m venv venv
 
-# For Linux and macOS:
-source venv/bin/activate
+These install the Vulkan SDK (`C:\VulkanSDK`), CMake, and the MinGW-w64 C++ compiler. Open a
+**new** terminal afterwards so the tools are on your `PATH`.
 
-# For Windows:
-venv\Scripts\activate
+**3b. Build the server:**
+
+```bash
+git clone --depth 1 --branch v1.9.5 https://github.com/ggml-org/whisper.cpp C:\tools\whisper.cpp
+cd C:\tools\whisper.cpp
+cmake -B build -G "MinGW Makefiles" -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release -DWHISPER_SDL2=OFF
+cmake --build build -j --target whisper-server
 ```
 
-#### 3. Install the required packages:
+The result is `C:\tools\whisper.cpp\build\bin\whisper-server.exe`. You can also build with
+Visual Studio: leave out `-G "MinGW Makefiles"`. Use whisper.cpp **v1.8.1 or newer**; older
+versions do not detect AMD iGPUs over Vulkan.
 
-```
-pip install -r requirements.txt
+**3c. Download a model** (ggml format, not the faster-whisper format):
+
+```bash
+curl -L -o C:\tools\whisper.cpp\models\ggml-large-v3-turbo.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
 ```
 
-#### 4. Run the Python code:
+| Model | Size | Notes |
+| --- | --- | --- |
+| `ggml-large-v3-turbo.bin` | 1.6 GB | **Recommended.** Fast and accurate. |
+| `ggml-large-v3.bin` | 3.1 GB | Most accurate, about half the speed. |
+| `ggml-small.bin` | 466 MB | For weak iGPUs or low memory. |
 
+**3d. Optional: check that the GPU is used.** Start the server once by hand:
+
+```bash
+C:\tools\whisper.cpp\build\bin\whisper-server.exe -m C:\tools\whisper.cpp\models\ggml-large-v3-turbo.bin
 ```
+
+The log should contain `ggml_vulkan: 0 = AMD Radeon ...` and `using Vulkan0 backend`. Stop it
+with `Ctrl+C`; from now on WhisperWriter starts and stops it for you.
+
+### Step 4 — First launch and engine setup
+
+```bash
 python run.py
 ```
 
-#### 5. Configure and start WhisperWriter:
-On first run, a Settings window should appear. Once configured and saved, another window will open. Press "Start" to activate the keyboard listener. Press the activation key (`ctrl+shift+space` by default) to start recording and transcribing to the active window.
-
-### Configuration Options
-
-WhisperWriter uses a configuration file to customize its behaviour. To set up the configuration, open the Settings window:
+On the first launch WhisperWriter opens on **Settings → Engine & GPU**:
 
 <p align="center">
-    <img src="./assets/ww-settings-demo.gif" alt="WhisperWriter Settings window demo gif" width="350" height="350">
+  <img src="assets/screenshots/settings-engine.png" alt="Settings page Engine and GPU with the whisper.cpp Vulkan engine selected and the engine status showing Ready on an AMD Radeon 8060S" width="820">
 </p>
 
-#### Model Options
-- `engine`: Transcription engine. `whispercpp` = GPU via Vulkan (AMD GPUs/iGPUs; requires a whisper.cpp Vulkan build + ggml model — see the AMD GPU fork section above). `faster-whisper` = in-process CPU. (Default: `faster-whisper`)
-- `common`: Options shared by both engines.
-  - `language`: The language code for the transcription in [ISO-639-1 format](https://en.wikipedia.org/wiki/List_of_ISO_639_language_codes). (Default: `null`)
-  - `temperature`: Controls the randomness of the transcription output. Lower values make the output more focused and deterministic. (Default: `0.0`)
-  - `initial_prompt`: A string used as an initial prompt to bias the transcription (e.g. domain terms). (Default: `null`)
+1. Click **whisper.cpp · Vulkan**, or *faster-whisper* if you have no GPU.
+2. Set **Server binary** to your `whisper-server.exe` and **Model file** to the `.bin` model.
+3. **Extra DLL folder**: if the server fails to start with a MinGW build, point this at the
+   MinGW `bin` folder (`%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs...\mingw64\bin`).
+4. Click **Save & apply**.
 
-- `whispercpp`: Options for the whisper.cpp GPU (Vulkan) engine.
-  - `binary_path`: Full path to `whisper-server.exe` (whisper.cpp built with Vulkan).
-  - `model_path`: Full path to the ggml model file (e.g. `ggml-large-v3.bin`; ggml format, not the faster-whisper format).
-  - `lib_path`: Directory with extra runtime DLLs the server needs (e.g. the MinGW `bin` dir); leave empty for MSVC builds.
-  - `host` / `port`: Where the local server listens. (Defaults: `127.0.0.1` / `8080`)
-  - `n_threads`: CPU threads for the server. (Default: empty)
-  - `auto_start`: Let WhisperWriter launch/stop the server automatically. (Default: `true`)
+The status pill in the top bar changes to **Ready · whisper.cpp · Vulkan · large-v3-turbo**,
+and the engine card shows the GPU the server picked (for example
+`AMD Radeon(TM) 8060S Graphics`). If the card says *no GPU found*, whisper.cpp was built
+without Vulkan. That is the whole setup.
 
-- `local`: Options for the faster-whisper (CPU) engine.
-  - `model`: The model to use. Larger models are more accurate but slower. See [available models](https://github.com/openai/whisper?tab=readme-ov-file#available-models-and-languages). (Default: `base`)
-  - `device`: `cpu` only on this AMD build (ctranslate2 has no AMD GPU path; for GPU use the `whispercpp` engine). (Default: `cpu`)
-  - `compute_type`: The compute type. [More on quantization](https://opennmt.net/CTranslate2/quantization.html). (Default: `default`)
-  - `condition_on_previous_text`: Use the previously transcribed text as a prompt for the next request. (Default: `true`)
-  - `vad_filter`: Use [a voice activity detection (VAD) filter](https://github.com/snakers4/silero-vad) to remove silence. (Default: `false`)
-  - `model_path`: Path to a local model. If empty, the model is downloaded. (Default: `null`)
+### Step 5 — Start with Windows (optional)
 
-#### Recording Options
-- `activation_key`: Shortcut to activate recording. A keyboard combo joined with `+` (e.g. `ctrl+shift+space`), or a mouse button: `mouse_back`, `mouse_forward`, `mouse_left`, `mouse_right`, `mouse_middle`. (Default: `ctrl+shift+space`)
-- `activation_key_no_enter`: Optional second shortcut that dictates WITHOUT pressing Enter afterwards (same format as `activation_key`, e.g. `mouse_forward`). Leave empty to disable. (Default: `null`)
-- `input_backend`: The input backend to use for detecting key presses. `auto` will try to use the best available backend. (Default: `auto`)
-- `recording_mode`: The recording mode to use. Options include `continuous` (auto-restart recording after pause in speech until activation key is pressed again), `voice_activity_detection` (stop recording after pause in speech), `press_to_toggle` (stop recording when activation key is pressed again), `hold_to_record` (stop recording when activation key is released). (Default: `continuous`)
-- `sound_device`: Input microphone. In the Settings window this is a dropdown of available microphones; in the config it is stored as the device name (or a numeric index), or empty for the system default. (Default: `null`)
-- `sample_rate`: The sample rate in Hz to use for recording. (Default: `16000`)
-- `silence_duration`: The duration in milliseconds to wait for silence before stopping the recording. (Default: `900`)
-- `min_duration`: The minimum duration in milliseconds for a recording to be processed. Recordings shorter than this will be discarded. (Default: `100`)
+| File | What it does |
+| --- | --- |
+| `start.bat` | Starts WhisperWriter with a console window, which is useful for logs |
+| `start_hidden.vbs` | Starts WhisperWriter with no console; it lives in the system tray |
+| `create_shortcut.ps1` | Creates Desktop and Start menu shortcuts (with the WhisperWriter icon). Add `-Autostart` for a login shortcut; with **Start in tray at login** on, that one starts in the tray. |
 
-#### Post-processing Options
-- `writing_key_press_delay`: The delay in seconds between each key press when writing the transcribed text. (Default: `0.005`)
-- `remove_trailing_period`: Set to `true` to remove the trailing period from the transcribed text. (Default: `false`)
-- `add_trailing_space`: Set to `true` to add a space to the end of the transcribed text. (Default: `true`)
-- `remove_capitalization`: Set to `true` to convert the transcribed text to lowercase. (Default: `false`)
-- `input_method`: The method to use for simulating keyboard input. (Default: `pynput`)
+Closing the window keeps WhisperWriter running in the **system tray**. Quit from the tray
+menu, which also stops the GPU server. Starting it a second time brings the running window
+back instead of opening a second copy.
 
-#### Miscellaneous Options
-- `print_to_terminal`: Set to `true` to print the script status and transcribed text to the terminal. (Default: `true`)
-- `hide_status_window`: Set to `true` to hide the status window during operation. (Default: `false`)
-- `noise_on_completion`: Set to `true` to play a noise after the transcription has been typed out. (Default: `false`)
+More Windows details (NVIDIA/CUDA, common pip problems) are in [INSTALL.md](INSTALL.md).
 
-If any of the configuration options are invalid or not provided, the program will use the default values.
+## Your first dictation
 
-## Known Issues
+1. Click into any text field: Notepad, a terminal, a chat box.
+2. Press **`Ctrl+Shift+Space`** and start talking.
+3. The recorder pill appears at the bottom of your screen:
 
-- For problems with **this fork's AMD GPU engine** (whisper.cpp / Vulkan / the `whispercpp` engine), please [open an issue on this repo](https://github.com/storm-ace/WhisperWriter-AMD/issues/new).
-- For general WhisperWriter behaviour shared with upstream, see the [upstream issue tracker](https://github.com/savbell/whisper-writer/issues).
+| Listening | Transcribing | Done |
+| :---: | :---: | :---: |
+| <img src="assets/screenshots/overlay-recording.png" alt="Recorder pill while listening, with a timer, a live waveform and the target window" width="300"> | <img src="assets/screenshots/overlay-transcribing.png" alt="Recorder pill while transcribing on the GPU" width="230"> | <img src="assets/screenshots/overlay-typed.png" alt="Result card showing the typed text and where it was typed" width="300"> |
+| Timer, live waveform and the window the text will go to. **■** stops, **✕** cancels. | The audio is being transcribed on your GPU. | The text was typed into your window. `Ctrl+Z` undoes it in most apps. |
 
-## Roadmap
-Below are features I am planning to add in the near future:
-- [x] Restructuring configuration options to reduce redundancy
-- [x] Update to use the latest version of the OpenAI API
-- [ ] Additional post-processing options:
-  - [ ] Simple word replacement (e.g. "gonna" -> "going to" or "smiley face" -> "😊")
-  - [ ] Using GPT for instructional post-processing
-- [x] Updating GUI
-- [ ] Creating standalone executable file
+4. Stop talking. After a short pause (1.2 s by default) the text appears where your cursor is.
 
-Below are features not currently planned:
-- [ ] Pipelining audio files
+The pill never takes keyboard focus, so the text always lands in the window you were in.
 
-Implemented features can be found in the [CHANGELOG](CHANGELOG.md).
+### Recording modes
 
-## Contributing
+Switch the mode in the record dock at the bottom of the main window:
 
-Contributions are welcome:
-- **This fork** (AMD GPU engine, whisper.cpp/Vulkan integration): [open a pull request](https://github.com/storm-ace/WhisperWriter-AMD/pulls) or [issue](https://github.com/storm-ace/WhisperWriter-AMD/issues/new) here.
-- **General WhisperWriter** features/fixes that aren't AMD-specific are best contributed to the [upstream project](https://github.com/savbell/whisper-writer), so everyone benefits.
+| Mode | How it behaves | Good for |
+| --- | --- | --- |
+| **Continuous** (default) | Types after each pause and keeps listening. The microphone stays open while a sentence is transcribed, so nothing you say in between is lost. Press the hotkey or **■** to stop. | Long dictation sessions |
+| **Voice detect** | Records until you pause, types, then stops. | One prompt or message at a time |
+| **Toggle** | Press the hotkey once to start and once to stop. | Long thoughts with long pauses |
+| **Hold** | Records only while you hold the hotkey. | Push-to-talk |
 
-## Credits
+### Keyboard shortcuts
 
-- [savbell/whisper-writer](https://github.com/savbell/whisper-writer) — the original WhisperWriter, which this is a fork of.
-- [ggml-org/whisper.cpp](https://github.com/ggml-org/whisper.cpp) — the Vulkan-capable Whisper engine this fork adds.
-- [OpenAI](https://openai.com/) for the Whisper model.
-- [Guillaume Klein](https://github.com/guillaumekln) / [SYSTRAN](https://github.com/SYSTRAN/faster-whisper) for the faster-whisper package.
-- All of the original [contributors](https://github.com/savbell/whisper-writer/graphs/contributors).
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+Shift+Space` | Start or stop dictating, from anywhere (configurable; mouse buttons work too) |
+| `Ctrl+K` | Command palette: search sessions and run commands |
+| `Ctrl+N` | New session |
+| `Ctrl+F` | Search all transcripts |
+| `Ctrl+,` | Settings |
+| `Esc` | Close the palette or settings, clear the search |
 
-## License
+## A tour of the app
 
-This project is licensed under the **GNU General Public License v3.0** (GPL-3.0). See the [LICENSE](LICENSE) file for the full text.
+<p align="center">
+  <img src="assets/screenshots/main-window-tour.png" alt="Annotated main window with numbered callouts" width="900">
+</p>
 
-This repository is a **modified version** of [savbell/whisper-writer](https://github.com/savbell/whisper-writer). The modifications — chiefly the whisper.cpp + Vulkan GPU engine for AMD GPUs/iGPUs — were added in June 2026. As required by the GPL, this fork remains licensed under GPL-3.0 and preserves the original license and authorship; the upstream code is © its respective WhisperWriter authors.
+| # | Element | What it does |
+| :-: | --- | --- |
+| 1 | **Engine status** | Shows whether the engine is starting, ready or failed, with the model name. Next to it is the measured speed. |
+| 2 | **Hotkey** | Your current dictation shortcut. |
+| 3 | **Command palette** | `Ctrl+K`: jump to any session by searching its text, or run a command. |
+| 4 | **New session** | Starts a fresh session. One also starts automatically after 30 idle minutes. |
+| 5 | **Session list** | All sessions grouped by day. The dot marks the session new dictations go to. Right-click for more actions. |
+| 6 | **Session title** | Double-click to rename. Below it: start time, number of dictations, words and audio length. |
+| 7 | **Send session / Send last dictation** | **Send session** sends the whole session as context to the Claude app or your Claude Code terminal; **Send last dictation** sends only your most recent dictation. **⋯** has copy as context, rename, summarise, export and delete. |
+| 8 | **Summary** | The local-LLM summary of the session (decisions, tasks, open questions), once you have made one. |
+| 9 | **Dictation** | Time, length, target window, transcription speed, and whether the LLM corrected it. The icons send this one dictation to Claude, copy it, or delete it. |
+| 10 | **Record button** | Dictates into this session only, without typing anywhere. Click again to stop. |
+| 11 | **Recording mode** | Continuous, Voice detect, Toggle or Hold. |
+| 12 | **Claude Code link** | Shows whether the MCP server is registered, so Claude Code can read your history. |
+| 13 | **Smart dictation** | Quick switches for Claude Code-aware typing, backticks, the Enter key and LLM correction. |
+| 14 | **Project vocabulary** | Names and terms Whisper should always spell right. |
+| 15 | **Engine stats** | Engine, the GPU the server is running on, model, average latency and speed. |
+
+## Using WhisperWriter with Claude Code
+
+### Dictating prompts
+
+Leave **Claude Code aware typing** on (the default). When the focused window is a terminal or
+editor running Claude Code, WhisperWriter:
+
+- **never presses Enter**, so you can read the prompt before you send it;
+- **wraps file names in backticks**: *"open auth_guard.py"* becomes ``open `auth_guard.py` ``;
+- labels the dictation `Windows Terminal · Claude Code` in your history.
+
+Both the **Claude desktop app** (its Code tab) and **Claude Code in a terminal** count. A
+terminal is recognised by Claude Code's window title (`✳ <task>`, a spinner, or "Claude Code")
+while a Claude process is running. Other terminals are left alone.
+
+Typical flow: put your cursor in the Claude Code prompt, press the hotkey, explain the task,
+check the text, press Enter yourself.
+
+### Sending dictations to Claude
+
+The session header has two buttons (both also in the palette and the **⋯** menu):
+
+| Button | Sends |
+| --- | --- |
+| **Send last dictation** | Only your most recent dictation, as plain text. Use it to send what you just said. |
+| **Send session** | The whole session as a `<dictation-session>` context block, including its summary. Use it to give Claude the full background. |
+
+Each dictation also has its own send icon. WhisperWriter finds the Claude window you used most
+recently (the desktop app or a Claude Code terminal), brings it to the front, pastes the text
+and presses Enter, so Claude gets it right away. To add a question before sending, turn off
+**Settings → Claude Code → Send buttons submit right away**. If no Claude window is open, the
+text is put on your clipboard instead.
+
+### Letting Claude Code read your history (MCP)
+
+Claude Code can search and read everything you dictated, so you never have to repeat
+yourself. Set it up once:
+
+<p align="center">
+  <img src="assets/screenshots/settings-claude-code.png" alt="Settings page Claude Code with the MCP registration command and the Add to Claude Code button" width="820">
+</p>
+
+1. Open **Settings → Claude Code**.
+2. Click **Add to Claude Code**. This runs `claude mcp add` for you. If the `claude` CLI is
+   not on your `PATH`, click **Copy command** and run it in a terminal instead:
+
+   ```bash
+   claude mcp add --scope user whisperwriter -- C:\WhisperWriter-AMD\.venv\Scripts\python.exe C:\WhisperWriter-AMD\src\mcp_server.py
+   ```
+
+3. Start a new Claude Code session. Run `claude mcp list` to check that `whisperwriter` is listed.
+
+Claude Code now has these read-only tools:
+
+| Tool | What it does |
+| --- | --- |
+| `search_dictations` | Full-text search over every dictation |
+| `list_sessions` | Recent sessions with id, title, time and size |
+| `get_session` | The full transcript of one session, with its summary (default: the latest) |
+| `recent_dictations` | The latest dictations, optionally only the last N minutes |
+
+Things you can ask Claude Code:
+
+> *"Check my dictations from this morning about the auth refactor and continue from there."*
+>
+> *"Search my dictation history for what I said about the token refresh flow."*
+>
+> *"Read my latest dictation session and turn it into a task list."*
+
+The MCP server uses only the Python standard library, opens the database **read-only**, and
+works while the app is running.
+
+## Sessions, search and history
+
+| Search in the sidebar | Command palette (`Ctrl+K`) |
+| :---: | :---: |
+| <img src="assets/screenshots/search.png" alt="Sidebar search showing two sessions matching the word token, with snippets" width="440"> | <img src="assets/screenshots/command-palette.png" alt="Command palette searching for refresh, with highlighted matches" width="380"> |
+
+- Every dictation is saved with its text, the raw engine output, the target app, the audio
+  length and the transcription time.
+- Sessions split automatically after **30 idle minutes** (configurable), or when you click
+  **New session**. To add to an older session, open it and click **Continue here**.
+- Search is full-text and prefix-based: `refr tok` finds *"refresh flow … bearer tokens"*.
+- Right-click a session (or use **⋯**) to **rename** it, **summarise it with the local LLM**,
+  **send it to Claude Code**, **copy it as context or Markdown**, **export a `.md` file**, or
+  **delete** it.
+- **Summaries** need the local LLM from
+  [Getting names and jargon right](#getting-names-and-jargon-right). The summary is saved with
+  the session, shown above its dictations, and included when you send or export it.
+- The history lives in `%APPDATA%\WhisperWriter\sessions.db`, a single SQLite file. Back it up
+  by copying it. To stop saving history, turn off **Settings → Sessions & storage → Enabled**.
+
+## Light or dark
+
+<p align="center">
+  <img src="assets/screenshots/main-window-light.png" alt="WhisperWriter main window in the light theme" width="820">
+</p>
+
+**Settings → Appearance** switches between a dark and a light theme, or follows Windows
+(**System**), and offers four accent colours. The change applies as soon as you save.
+
+<p align="center">
+  <img src="assets/screenshots/settings-appearance.png" alt="Appearance settings with theme buttons Dark, Light, System and accent swatches Orange, Amber, Blue, Violet" width="820">
+</p>
+
+## Getting names and jargon right
+
+<p align="center">
+  <img src="assets/screenshots/settings-correction.png" alt="Settings page Correction and vocabulary with project vocabulary, hallucination filter and word replacements" width="820">
+</p>
+
+Three tools, from cheapest to most powerful:
+
+1. **Project vocabulary.** List names, file names and jargon, separated by commas (for example
+   `auth_guard.py, FastAPI, pytest`). They are added to Whisper's prompt so they are spelled
+   right the first time. There is no speed cost.
+2. **Word replacements.** Fixed `wrong = right` rules, one per line, for words the model keeps
+   getting wrong (`cloud code = Claude Code`). There is no speed cost.
+3. **LLM correction and summaries** (off by default). Each dictation goes through a small local LLM
+   ([llama.cpp](https://github.com/ggml-org/llama.cpp) on the same GPU), which fixes
+   punctuation, capitals and clear mistakes without rewriting. It adds about 0.4–1 s. Build
+   llama.cpp like whisper.cpp (`-DGGML_VULKAN=ON`), download a GGUF model, and set the paths
+   here. In testing, *Gemma-3-4B-it Q4_K_M* worked best. If the LLM fails or is too slow, the
+   original text is used.
+
+The **hallucination filter** (on by default) drops text Whisper tends to invent on silence or
+noise, such as *"Thank you."*, *"Thanks for watching!"* or `[BLANK_AUDIO]`.
+
+## Settings reference
+
+Everything can be changed in the app. **Save & apply** takes effect right away; only the
+engine restarts, and only when its own settings changed. Settings are stored in
+`src/config.yaml`. [`config.yaml.example`](config.yaml.example) is an annotated example, and
+[`src/config_schema.yaml`](src/config_schema.yaml) lists every option with its default and
+description.
+
+| Section | Settings |
+| --- | --- |
+| **Engine & GPU** | Engine (whisper.cpp / faster-whisper), language, temperature, server binary, model file, DLL folder, host and port, CPU threads |
+| **Hotkeys & recording** | Dictate hotkey, dictate-without-Enter hotkey, recording mode, microphone, silence before stop, minimum speech, noise rejection (0–3), sample rate |
+| **Output & typing** | Insert method (`clipboard` is the most reliable), press Enter after dictating, trailing space and period, beep, hide the recorder pill, start in tray |
+| **Correction & vocabulary** | Project vocabulary, hallucination filter, word replacements, initial prompt, local LLM for correction and summaries |
+| **Claude Code** | Claude Code aware typing, never press Enter in Claude Code, backtick file names, MCP setup |
+| **Sessions & storage** | Save history, new session after N idle minutes, database location |
+| **Appearance** | Theme (dark, light, system) and accent colour |
+
+## Troubleshooting
+
+| Problem | Solution |
+| --- | --- |
+| Status shows **whisper.cpp server not running** | Check **Server binary** and **Model file**. With a MinGW build, set **Extra DLL folder** to MinGW's `bin`. Then click **Restart engine**. |
+| The engine card says **no GPU found** | whisper.cpp was built without Vulkan, or the driver is too old. Rebuild with `-DGGML_VULKAN=ON`, update the AMD driver, and use whisper.cpp v1.8.1 or newer. The full server log is in `%APPDATA%\WhisperWriter\whisper-server.log`. |
+| **Summary failed: no local LLM server is running** | Set up llama.cpp under **Settings → Correction & vocabulary** and enable LLM correction. |
+| **Send session** / **Send last dictation** only copies to the clipboard | No Claude window was found: open the Claude desktop app, or a terminal whose title shows Claude Code's `✳` marker or "Claude Code". Paste with `Ctrl+V`. |
+| Words appear that you never said | Raise **Noise rejection** to 3, raise **Minimum speech**, and keep the **hallucination filter** on. |
+| Continuous mode cuts sentences in half | Raise **Silence before stop** (for example to 1500 ms). |
+| Characters go missing while typing | Set **Insert text with** to `clipboard`. |
+| The hotkey does nothing | Another app may own the shortcut. Choose another combo or a mouse button (`mouse_forward`). |
+| Claude Code does not show the whisperwriter tools | Start a new Claude Code session after registering, and check `claude mcp list`. |
+| Nothing happens when starting the app again | That is by design: it shows the running instance. Look for the tray icon. |
+
+Problems with this fork (AMD engine, UI, sessions, MCP) go to
+[the issue tracker](https://github.com/storm-ace/WhisperWriter-AMD/issues/new).
+
+## For developers
+
+```text
+run.py                    entry point (loads .env, starts src/main.py)
+src/main.py               app wiring: lifecycle, tray, sessions, settings, background tasks
+src/engine.py             starts whisper.cpp / faster-whisper (+ LLM server), detects the GPU
+src/recording.py          dictation flow: hotkey/button/pill, typing, Claude Code handling
+src/result_thread.py      microphone capture, speech segmentation, transcription worker
+src/transcription.py      engines, text clean-up, LLM correction and summaries
+src/sessions.py           SQLite + FTS5 session store (no Qt dependency)
+src/mcp_server.py         stdio MCP server for Claude Code (standard library only)
+src/claude_integration.py MCP registration helpers
+src/active_window.py      window detection, Claude Code heuristics, focusing a window
+src/ui/                   PySide6 UI: theme, main window, context panel, settings, pill, palette
+```
+
+The settings page is generated from `src/config_schema.yaml`: add an option there and it
+appears in the UI. To try the MCP server by hand, run `python src/mcp_server.py` and send it
+JSON-RPC lines (`initialize`, `tools/list`, `tools/call`).
+
+## Credits and license
+
+- [savbell/whisper-writer](https://github.com/savbell/whisper-writer): the original
+  WhisperWriter this project forks, and all its
+  [contributors](https://github.com/savbell/whisper-writer/graphs/contributors).
+- [ggml-org/whisper.cpp](https://github.com/ggml-org/whisper.cpp) and
+  [llama.cpp](https://github.com/ggml-org/llama.cpp): the Vulkan engines.
+- [OpenAI Whisper](https://github.com/openai/whisper) and
+  [SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper).
+
+Licensed under the **GNU General Public License v3.0**; see [LICENSE](LICENSE). This is a
+modified version of savbell/whisper-writer. This fork added the whisper.cpp/Vulkan engine
+(June 2026) and the PySide6 UI, session history, Claude Code integration and noise-robust
+voice detection (October 2026). The upstream code remains © its respective authors.
