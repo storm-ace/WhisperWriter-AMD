@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sessions import SessionStore, default_db_path, fmt_timestamp  # noqa: E402
 
 SERVER_NAME = 'whisperwriter'
-SERVER_VERSION = '2.0.0'
+SERVER_VERSION = '2.0.1'
 DEFAULT_PROTOCOL = '2025-06-18'
 
 TOOLS = [

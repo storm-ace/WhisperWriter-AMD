@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [2.0.1-amd] - 2026-10-16
 ### Fixed
 - "No module named 'faster_whisper'" on start: the portable release does not ship
   faster-whisper, so the engine now switches to the bundled whisper.cpp instead. From source,
