@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+### Fixed
+- "No module named 'faster_whisper'" on start: the portable release does not ship
+  faster-whisper, so the engine now switches to the bundled whisper.cpp instead. From source,
+  a missing faster-whisper is pip-installed automatically.
+- Missing whisper.cpp model: `ggml-large-v3-turbo.bin` is downloaded into `models` (or
+  `%APPDATA%\WhisperWriter\models` when the program folder is read-only) on first start,
+  with progress in the status pill.
+- `start.bat` creates `.venv` and installs the dependencies itself on the first start.
+
 ## [2.0.0-amd] - 2026-10-16
 ### Added
 - Portable Windows release (`packaging/build_release.ps1`): `WhisperWriter.exe` with a bundled

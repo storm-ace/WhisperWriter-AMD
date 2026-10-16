@@ -5,7 +5,7 @@
 #
 # Needs the .venv from the README (plus `pip install pyinstaller`) and a whisper.cpp build
 # with Vulkan. For a MinGW build the runtime DLLs are taken from the folder of g++.exe
-# (or -MinGWBin). The ggml model is not bundled (1.6 GB); users drop it into models\.
+# (or -MinGWBin). The ggml model is not bundled (1.6 GB); the app downloads it on first start.
 param(
     [string]$Version = '2.0.0-amd',
     [Parameter(Mandatory = $true)][string]$WhisperServer,
@@ -53,9 +53,10 @@ Write-Host '== models folder'
 $models = Join-Path $app 'models'
 New-Item -ItemType Directory -Force $models | Out-Null
 @'
-Put a whisper.cpp ggml model in this folder. WhisperWriter picks it up automatically.
+WhisperWriter downloads ggml-large-v3-turbo.bin into this folder on the first start.
+To use another whisper.cpp ggml model, put it here; it is picked up automatically.
 
-Recommended (1.6 GB):
+Manual download of the default (1.6 GB):
   curl -L -o ggml-large-v3-turbo.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
 
 Others: ggml-large-v3.bin (most accurate), ggml-small.bin (466 MB, for weak GPUs).

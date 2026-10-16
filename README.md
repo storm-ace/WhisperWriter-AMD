@@ -83,14 +83,11 @@ There are two ways to install: the **portable download** (no Python, no build) o
 1. Download `WhisperWriter-AMD-<version>-win64.zip` from the
    [latest release](https://github.com/storm-ace/WhisperWriter-AMD/releases/latest) and unzip
    it anywhere, for example to `C:\Programs\WhisperWriter`.
-2. Download a model into its `models` folder (`models\README.txt` lists the options):
-
-   ```bash
-   curl -L -o models\ggml-large-v3-turbo.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
-   ```
-
-3. Start `WhisperWriter.exe`. The bundled whisper.cpp server (built with Vulkan) and the model
-   in `models` are picked up automatically. The engine card in Settings shows which GPU it
+2. Start `WhisperWriter.exe`. On the first start it downloads the `large-v3-turbo` model
+   (1.6 GB) into its `models` folder by itself; the status pill shows the progress. To use a
+   different model, drop another `ggml-*.bin` into `models` (`models\README.txt` lists the
+   options). The bundled whisper.cpp server (built with Vulkan) and the model are picked up
+   automatically. The engine card in Settings shows which GPU it
    uses; without a Vulkan GPU it falls back to the CPU.
 
 Settings and history are stored in `%APPDATA%\WhisperWriter`, so you can replace the program

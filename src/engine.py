@@ -10,10 +10,11 @@ from enum import Enum
 
 from PySide6.QtCore import QObject, Signal
 
+import model_setup
 from llamacpp_server import LlamaCppServer
 from transcription import EngineKind, create_local_model, model_label, resolve_engine
 from utils import ConfigManager
-from whispercpp_server import WhisperCppServer
+from whispercpp_server import WhisperCppServer, bundled_model
 
 
 class EngineState(str, Enum):
@@ -109,6 +110,13 @@ class EngineManager(QObject):
         if old:
             self._stop_servers(old)
         kind = resolve_engine()
+        if kind is EngineKind.FASTER_WHISPER and not model_setup.faster_whisper_available()                 and not model_setup.can_install_packages():
+            # The portable release does not ship faster-whisper; it ships whisper.cpp
+            # (Vulkan, with CPU fallback) instead. Switch so the app works out of the box.
+            ConfigManager.console_print('faster-whisper is not part of this build; using whisper.cpp.')
+            ConfigManager.set_config_value(EngineKind.WHISPERCPP.value, 'model_options', 'engine')
+            ConfigManager.save_config()
+            kind = EngineKind.WHISPERCPP
         try:
             status = (self._start_whispercpp(run) if kind is EngineKind.WHISPERCPP
                       else self._start_faster_whisper(run))
@@ -123,7 +131,9 @@ class EngineManager(QObject):
 
     def _start_whispercpp(self, run):
         opts = ConfigManager.get_config_section('model_options').get('whispercpp', {})
-        model = model_label(opts.get('model_path'))
+        if not opts.get('model_path') and not bundled_model() and opts.get('auto_start', True):
+            self._download_ggml_model(run)
+        model = model_label(opts.get('model_path') or bundled_model())
         self._emit(run, EngineStatus(EngineState.STARTING, f'Loading {model or "model"} on the GPU…',
                                      kind=EngineKind.WHISPERCPP, model=model))
         server = WhisperCppServer()
@@ -143,9 +153,32 @@ class EngineManager(QObject):
         status.title = ' · '.join(p for p in ('Ready', 'whisper.cpp', backend, model) if p)
         return status
 
+    def _download_ggml_model(self, run):
+        name = model_setup.GGML_DEFAULT_MODEL
+        shown = [-1]
+
+        def progress(done, total):
+            pct = int(done * 100 / total) if total else -1
+            if pct != shown[0]:
+                shown[0] = pct
+                mb = f'{done / 2**20:,.0f} / {total / 2**20:,.0f} MB' if total else f'{done / 2**20:,.0f} MB'
+                self._emit(run, EngineStatus(
+                    EngineState.STARTING, f'Downloading {name} model… {pct}%' if total
+                    else f'Downloading {name} model…', f'First start only · {mb}',
+                    EngineKind.WHISPERCPP, model=name))
+
+        self._emit(run, EngineStatus(EngineState.STARTING, f'Downloading {name} model…',
+                                     'First start only', EngineKind.WHISPERCPP, model=name))
+        model_setup.download_ggml_model(name, progress, cancelled=lambda: not self._is_current(run))
+
     def _start_faster_whisper(self, run):
         opts = ConfigManager.get_config_section('model_options').get('local', {})
         model, device = opts.get('model') or 'base', (opts.get('device') or 'cpu').upper()
+        if not model_setup.faster_whisper_available():
+            self._emit(run, EngineStatus(EngineState.STARTING, 'Installing faster-whisper…',
+                                         'First start only, this takes a minute',
+                                         EngineKind.FASTER_WHISPER, model=model))
+            model_setup.install_faster_whisper()
         self._emit(run, EngineStatus(EngineState.STARTING, f'Loading {model} on the {device}…',
                                      kind=EngineKind.FASTER_WHISPER, model=model))
         local_model = create_local_model()
