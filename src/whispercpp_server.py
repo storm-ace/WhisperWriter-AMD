@@ -17,11 +17,29 @@ import socket
 import subprocess
 import time
 
+import glob
+
 from sessions import app_data_dir
-from utils import ConfigManager
+from utils import APP_ROOT, ConfigManager
 
 _VULKAN_DEVICE = re.compile(r'ggml_vulkan: 0 = (.+?)(?: \(|\s*\|)')
 _BACKEND = re.compile(r'using (\w+?)\d* backend')
+
+
+# The release build ships whisper-server here; ggml models dropped into models/ are found.
+BUNDLED_SERVER = os.path.join(APP_ROOT, 'whisper.cpp', 'whisper-server.exe')
+MODELS_DIR = os.path.join(APP_ROOT, 'models')
+_MODEL_PREFERENCE = ('large-v3-turbo', 'large-v3', 'medium', 'small', 'base')
+
+
+def bundled_model():
+    """Best ggml model found in the models/ folder, or None."""
+    found = glob.glob(os.path.join(MODELS_DIR, 'ggml-*.bin'))
+    for name in _MODEL_PREFERENCE:
+        for path in found:
+            if os.path.basename(path) == f'ggml-{name}.bin':
+                return path
+    return found[0] if found else None
 
 
 class WhisperCppServer:
@@ -33,8 +51,9 @@ class WhisperCppServer:
         # The server's stderr is kept so the GPU it picked can be shown in the app.
         self.log_path = os.path.join(app_data_dir(), 'whisper-server.log')
         options = ConfigManager.get_config_section('model_options').get('whispercpp', {})
-        self.binary_path = options.get('binary_path')
-        self.model_path = options.get('model_path')
+        self.binary_path = options.get('binary_path') or (
+            BUNDLED_SERVER if os.path.isfile(BUNDLED_SERVER) else None)
+        self.model_path = options.get('model_path') or bundled_model()
         self.host = options.get('host') or '127.0.0.1'
         self.port = int(options.get('port') or 8080)
         self.n_threads = options.get('n_threads')

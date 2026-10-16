@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from mcp_server import SERVER_NAME, TOOLS
+from utils import APP_ROOT, IS_FROZEN
 
 MCP_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mcp_server.py')
 TOOL_NAMES = [tool['name'] for tool in TOOLS]
@@ -26,7 +27,10 @@ def _console_python():
 
 
 def server_command(db_path=None):
-    cmd = [_console_python(), MCP_SCRIPT]
+    if IS_FROZEN:   # the release build ships the server as its own console program
+        cmd = [os.path.join(APP_ROOT, 'whisperwriter-mcp.exe')]
+    else:
+        cmd = [_console_python(), MCP_SCRIPT]
     if db_path:
         cmd += ['--db', db_path]
     return cmd

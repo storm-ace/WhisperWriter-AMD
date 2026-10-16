@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [2.0.0-amd] - 2026-10-16
 ### Added
+- Portable Windows release (`packaging/build_release.ps1`): `WhisperWriter.exe` with a bundled
+  whisper.cpp Vulkan server, `whisperwriter-mcp.exe` for Claude Code, and a `models` folder
+  that is picked up automatically. Settings live in `%APPDATA%\WhisperWriter`.
 - Completely new PySide6 (Qt 6) interface: one main window with session history, live
   record dock, Claude Code context panel, Ctrl+K command palette and in-window settings.
 - Session history: every dictation is stored in a local SQLite database with full-text

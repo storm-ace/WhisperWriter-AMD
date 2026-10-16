@@ -1,10 +1,28 @@
 import copy
 import os
+import sys
 
 import yaml
 
-# Absolute so the app works no matter which directory it is launched from.
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
+# True in the portable release build (PyInstaller), False when running from source.
+IS_FROZEN = getattr(sys, 'frozen', False)
+
+# Folder with assets/, whisper.cpp/ and models/: the repository root from source, the
+# folder holding WhisperWriter.exe in the release build.
+APP_ROOT = (os.path.dirname(sys.executable) if IS_FROZEN
+            else os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _config_path():
+    """src/config.yaml from source; %APPDATA%\\WhisperWriter\\config.yaml in the release build,
+    so settings survive replacing the program folder with a newer release."""
+    if IS_FROZEN:
+        from sessions import app_data_dir
+        return os.path.join(app_data_dir(), 'config.yaml')
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')
+
+
+CONFIG_PATH = _config_path()
 
 
 class ConfigManager:
@@ -122,6 +140,7 @@ class ConfigManager:
         """Save the current configuration to a YAML file."""
         if cls._instance is None:
             raise RuntimeError("ConfigManager not initialized")
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
         with open(config_path, 'w', encoding='utf-8') as file:
             yaml.dump(cls._instance.config, file, default_flow_style=False, allow_unicode=True)
 
