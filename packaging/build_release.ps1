@@ -7,7 +7,7 @@
 # with Vulkan. For a MinGW build the runtime DLLs are taken from the folder of g++.exe
 # (or -MinGWBin). The ggml model is not bundled (1.6 GB); the app downloads it on first start.
 param(
-    [string]$Version = '2.0.0-amd',
+    [string]$Version = '2.0.1-amd',
     [Parameter(Mandatory = $true)][string]$WhisperServer,
     [string]$MinGWBin = ''
 )
