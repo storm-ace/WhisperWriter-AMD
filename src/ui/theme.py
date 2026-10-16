@@ -16,6 +16,8 @@ from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QIcon, 
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QLabel, QPushButton, QToolButton, QWidget
 
+from utils import APP_ROOT
+
 THEMES = ('dark', 'light', 'system')
 
 ACCENTS = {
@@ -377,8 +379,7 @@ def icon(name, color=None, size=48):
     return _icon_cache[key]
 
 
-APP_ICON_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__)))), 'assets', 'whisperwriter.ico')
+APP_ICON_FILE = os.path.join(APP_ROOT, 'assets', 'whisperwriter.ico')
 
 
 def app_icon():

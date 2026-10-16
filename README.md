@@ -75,6 +75,31 @@ flowchart LR
 
 ## Installation
 
+There are two ways to install: the **portable download** (no Python, no build) or
+**from source** (all options, including the CPU-only faster-whisper engine).
+
+### Quick install: portable download
+
+1. Download `WhisperWriter-AMD-<version>-win64.zip` from the
+   [latest release](https://github.com/storm-ace/WhisperWriter-AMD/releases/latest) and unzip
+   it anywhere, for example to `C:\Programs\WhisperWriter`.
+2. Download a model into its `models` folder (`models\README.txt` lists the options):
+
+   ```bash
+   curl -L -o models\ggml-large-v3-turbo.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+   ```
+
+3. Start `WhisperWriter.exe`. The bundled whisper.cpp server (built with Vulkan) and the model
+   in `models` are picked up automatically. The engine card in Settings shows which GPU it
+   uses; without a Vulkan GPU it falls back to the CPU.
+
+Settings and history are stored in `%APPDATA%\WhisperWriter`, so you can replace the program
+folder with a newer release without losing anything. **Settings → Claude Code → Add to Claude
+Code** registers the bundled `whisperwriter-mcp.exe`. The portable build does not include the
+faster-whisper engine; install from source if you need it.
+
+The rest of this section installs from source.
+
 ### What you need
 
 | | Requirement |
@@ -438,7 +463,16 @@ src/ui/                   PySide6 UI: theme, main window, context panel, setting
 ```
 
 The settings page is generated from `src/config_schema.yaml`: add an option there and it
-appears in the UI. To try the MCP server by hand, run `python src/mcp_server.py` and send it
+appears in the UI.
+
+To build the portable release (needs `pip install pyinstaller` in the `.venv` and a whisper.cpp
+Vulkan build):
+
+```bash
+powershell -ExecutionPolicy Bypass -File packaging\build_release.ps1 -WhisperServer C:\tools\whisper.cpp\build\bin\whisper-server.exe
+```
+
+The result is `dist\WhisperWriter-AMD-<version>-win64.zip`. To try the MCP server by hand, run `python src/mcp_server.py` and send it
 JSON-RPC lines (`initialize`, `tools/list`, `tools/call`).
 
 ## Credits and license

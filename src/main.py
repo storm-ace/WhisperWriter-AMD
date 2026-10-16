@@ -23,9 +23,8 @@ from transcription import summarize_with_llm
 from ui import theme
 from ui.main_window import MainWindow
 from ui.overlay import RecorderOverlay
-from utils import ConfigManager
-
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from utils import APP_ROOT, IS_FROZEN, ConfigManager
+from whispercpp_server import BUNDLED_SERVER
 INSTANCE_NAME = 'WhisperWriter-AMD'
 APP_USER_MODEL_ID = 'Stormace.WhisperWriter.AMD'
 
@@ -107,6 +106,9 @@ class WhisperWriterApp(QObject):
 
         ConfigManager.initialize()
         first_run = not ConfigManager.config_file_exists()
+        if first_run and IS_FROZEN and os.path.isfile(BUNDLED_SERVER):
+            # The release build ships whisper.cpp (Vulkan, with CPU fallback): use it.
+            ConfigManager.set_config_value('whispercpp', 'model_options', 'engine')
         self._apply_theme()
 
         self.store = SessionStore(ConfigManager.get_config_value('sessions', 'db_path') or None)
@@ -413,7 +415,7 @@ class WhisperWriterApp(QObject):
 
 
 def main():
-    os.chdir(ROOT)   # relative asset paths (assets/beep.wav) resolve from the repository root
+    os.chdir(APP_ROOT)   # relative asset paths (assets/beep.wav) resolve from the app folder
     install_crash_log()
     set_windows_app_id()
     WhisperWriterApp().run()
