@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.0.2-amd] - 2026-10-19
+### Fixed
+- "500 Server Error ... /inference" on every dictation when another program (e.g. a WSL or
+  Docker service) already listens on port 8080: the app reused that server blindly. It now
+  only reuses a real whisper-server (`Server: whisper.cpp` header) and otherwise starts the
+  bundled one on a free port.
+
 ## [2.0.1-amd] - 2026-10-16
 ### Fixed
 - "No module named 'faster_whisper'" on start: the portable release does not ship
