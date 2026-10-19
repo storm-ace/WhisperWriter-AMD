@@ -19,6 +19,8 @@ import time
 
 import glob
 
+import requests
+
 from model_setup import models_dirs
 from sessions import app_data_dir
 from utils import APP_ROOT, ConfigManager
@@ -41,6 +43,23 @@ def bundled_model():
             if os.path.basename(path) == f'ggml-{name}.bin':
                 return path
     return found[0] if found else None
+
+
+# Address of the whisper-server the engine actually uses. It differs from the configured
+# port when that port was taken by another program and a free one was picked instead.
+_active_url = None
+
+
+def active_url():
+    """Base URL of the running whisper-server, or None when the engine did not set one."""
+    return _active_url
+
+
+def _free_port(host):
+    """A port on `host` that nothing is bound to right now."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((host, 0))
+        return sock.getsockname()[1]
 
 
 class WhisperCppServer:
@@ -71,12 +90,30 @@ class WhisperCppServer:
             sock.settimeout(0.5)
             return sock.connect_ex((self.host, self.port)) == 0
 
+    def _is_whisper_server(self):
+        """
+        True if what listens on the port is a whisper-server. Another program on the same
+        port (e.g. a WSL/Docker service forwarded to 8080) answers /inference with errors.
+        """
+        try:
+            resp = requests.get(self._server_url() + '/health', timeout=2)
+        except requests.RequestException:
+            return False
+        return 'whisper.cpp' in resp.headers.get('Server', '').lower()
+
+    def _set_active(self):
+        global _active_url
+        _active_url = self._server_url()
+
     def is_running(self):
         return self.process is not None and self.process.poll() is None
 
     def is_available(self):
-        """True if the server is reachable (started by this app or already running)."""
-        return self._is_port_open()
+        """True if a whisper-server is reachable (started by this app or already running)."""
+        if self._is_port_open() and self._is_whisper_server():
+            self._set_active()
+            return True
+        return False
 
     def start(self, wait_timeout=120):
         """
@@ -85,10 +122,16 @@ class WhisperCppServer:
         :return: True if the server is running, otherwise False.
         """
         if self._is_port_open():
-            # Something is already listening on this port (e.g. started manually). Reuse it.
+            if self._is_whisper_server():
+                # A whisper-server is already running here (e.g. started manually). Reuse it.
+                ConfigManager.console_print(
+                    f'whisper.cpp server already reachable at {self._server_url()}; reusing it.')
+                self._set_active()
+                return True
+            taken = self.port
+            self.port = _free_port(self.host)
             ConfigManager.console_print(
-                f'whisper.cpp server already reachable at {self._server_url()}; reusing it.')
-            return True
+                f'Port {taken} is used by another program; starting whisper.cpp on port {self.port}.')
 
         if not self.binary_path or not os.path.isfile(self.binary_path):
             ConfigManager.console_print(
@@ -141,6 +184,7 @@ class WhisperCppServer:
             if self._is_port_open():
                 ConfigManager.console_print(
                     f'whisper.cpp server ready at {self._server_url()}.')
+                self._set_active()
                 return True
             time.sleep(0.5)
 
@@ -165,6 +209,9 @@ class WhisperCppServer:
 
     def stop(self):
         """Stop the server process (if it was started by this app)."""
+        global _active_url
+        if _active_url == self._server_url():
+            _active_url = None
         process = self.process
         self.process = None
         if process is not None and process.poll() is None:

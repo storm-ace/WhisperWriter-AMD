@@ -8,6 +8,7 @@ import numpy as np
 import requests
 import soundfile as sf
 
+import whispercpp_server
 from utils import ConfigManager
 
 
@@ -132,7 +133,7 @@ def transcribe_whispercpp(audio_data):
     wc_options = model_options.get('whispercpp', {})
     host = wc_options.get('host') or '127.0.0.1'
     port = int(wc_options.get('port') or 8080)
-    server_url = f'http://{host}:{port}'
+    server_url = whispercpp_server.active_url() or f'http://{host}:{port}'
 
     byte_io = io.BytesIO()
     sample_rate = ConfigManager.get_config_section('recording_options').get('sample_rate') or 16000
